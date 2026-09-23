@@ -58,7 +58,14 @@ jobs:
       - name: Make Gradlew Executable
         run: chmod +x ./gradlew
 
+      - name: Decode Keystore
+        run: echo "${{ secrets.SIGNING_KEYSTORE_BASE64 }}" | base64 --decode > ${{ github.workspace }}/keystore.jks
+
       - name: Build APK(s)
+        env:
+          ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
+          STORE_PASS: ${{ secrets.SIGNING_STORE_PASSWORD }}
+          KEY_PASS: ${{ secrets.SIGNING_KEY_PASSWORD }}
         run: |
           FLAVOR="${{ github.event.inputs.flavor }}"
           BUILD_TYPE="${{ github.event.inputs.build_type }}"
@@ -68,12 +75,22 @@ jobs:
           
           if [ "$FLAVOR" = "all" ]; then
             echo "Building all flavors for $BUILD_TYPE..."
-            ./gradlew assemble${CAP_TYPE} --no-daemon --stacktrace
+            ./gradlew assemble${CAP_TYPE} \
+              -Pandroid.injected.signing.store.file=${{ github.workspace }}/keystore.jks \
+              -Pandroid.injected.signing.store.password=$STORE_PASS \
+              -Pandroid.injected.signing.key.alias=$ALIAS \
+              -Pandroid.injected.signing.key.password=$KEY_PASS \
+              --no-daemon --stacktrace
           else
             CAP_FLAVOR="$(echo ${FLAVOR:0:1} | tr '[:lower:]' '[:upper:]')${FLAVOR:1}"
             TASK_NAME="assemble${CAP_FLAVOR}${CAP_TYPE}"
             echo "Executing task: :app:${TASK_NAME}..."
-            ./gradlew :app:${TASK_NAME} --no-daemon --stacktrace
+            ./gradlew :app:${TASK_NAME} \
+              -Pandroid.injected.signing.store.file=${{ github.workspace }}/keystore.jks \
+              -Pandroid.injected.signing.store.password=$STORE_PASS \
+              -Pandroid.injected.signing.key.alias=$ALIAS \
+              -Pandroid.injected.signing.key.password=$KEY_PASS \
+              --no-daemon --stacktrace
           fi
 
       - name: Upload Built APK Artifacts
