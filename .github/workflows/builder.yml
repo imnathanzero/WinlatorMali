@@ -34,11 +34,10 @@ jobs:
           java-version: '21'
           distribution: 'temurin'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
       - name: Install Android NDK & CMake
         run: |
+          # Accept licenses automatically before installing
+          yes | ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager --licenses
           yes | ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager --sdk_root=${ANDROID_HOME} "ndk;29.0.14206865" "cmake;3.22.1" "build-tools;35.0.0" "platforms;android-34"
 
       - name: Set up Gradle
