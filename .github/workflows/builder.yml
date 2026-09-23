@@ -49,13 +49,36 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
+      - name: Decode Keystore
+        run: echo "${{ secrets.SIGNING_KEYSTORE_BASE64 }}" | base64 --decode > ${{ github.workspace }}/keystore.jks
+
       - name: Build debug APK
         if: ${{ github.event.inputs.build_release != 'true' }}
-        run: ./gradlew :app:assembleDebug --stacktrace --no-daemon
+        env:
+          ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
+          STORE_PASS: ${{ secrets.SIGNING_STORE_PASSWORD }}
+          KEY_PASS: ${{ secrets.SIGNING_KEY_PASSWORD }}
+        run: |
+          ./gradlew :app:assembleDebug \
+            -Pandroid.injected.signing.store.file=${{ github.workspace }}/keystore.jks \
+            -Pandroid.injected.signing.store.password=$STORE_PASS \
+            -Pandroid.injected.signing.key.alias=$ALIAS \
+            -Pandroid.injected.signing.key.password=$KEY_PASS \
+            --stacktrace --no-daemon
 
       - name: Build release APK
         if: ${{ github.event.inputs.build_release == 'true' }}
-        run: ./gradlew assembleRelease --stacktrace --no-daemon
+        env:
+          ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
+          STORE_PASS: ${{ secrets.SIGNING_STORE_PASSWORD }}
+          KEY_PASS: ${{ secrets.SIGNING_KEY_PASSWORD }}
+        run: |
+          ./gradlew assembleRelease \
+            -Pandroid.injected.signing.store.file=${{ github.workspace }}/keystore.jks \
+            -Pandroid.injected.signing.store.password=$STORE_PASS \
+            -Pandroid.injected.signing.key.alias=$ALIAS \
+            -Pandroid.injected.signing.key.password=$KEY_PASS \
+            --stacktrace --no-daemon
 
       - name: Report
         if: always()
