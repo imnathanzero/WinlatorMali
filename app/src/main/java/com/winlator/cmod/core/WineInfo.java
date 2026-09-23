@@ -117,35 +117,93 @@ public class WineInfo implements Parcelable {
     @NonNull
     public static WineInfo fromIdentifier(Context context, ContentsManager contentsManager, String identifier) {
         ImageFs imageFs = ImageFs.find(context);
-        String path = "";
+        Log.d("WineInfo", "Creating WineInfo from identifier: " + identifier);
 
-        Log.d("WineInfo", "Creating WineInfo from identifier " + identifier);
-
-        if (identifier.equals(MAIN_WINE_VERSION.identifier())) return new WineInfo(MAIN_WINE_VERSION.type, MAIN_WINE_VERSION.version, MAIN_WINE_VERSION.arch, imageFs.getRootDir().getPath() + "/opt/" + MAIN_WINE_VERSION.identifier());
-
-        ContentProfile wineProfile = contentsManager.getProfileByEntryName(identifier);
-
-        if (wineProfile != null && (wineProfile.type == ContentProfile.ContentType.CONTENT_TYPE_WINE || wineProfile.type == ContentProfile.ContentType.CONTENT_TYPE_PROTON)) {
-            identifier = identifier.substring(0, identifier.length() - 2).toLowerCase();
+        if (identifier == null || identifier.isEmpty()) {
+            return new WineInfo(MAIN_WINE_VERSION.type, MAIN_WINE_VERSION.version, MAIN_WINE_VERSION.arch, imageFs.getRootDir().getPath() + "/opt/" + MAIN_WINE_VERSION.identifier());
         }
 
-        Matcher matcher = pattern.matcher(identifier);
+        String cleanId = identifier;
+        ContentProfile wineProfile = contentsManager != null ? contentsManager.getProfileByEntryName(identifier) : null;
+        if (wineProfile != null && wineProfile.verName != null && !wineProfile.verName.isEmpty()) {
+            cleanId = wineProfile.verName;
+        } else if (cleanId.matches(".*\\-\\d+$")) {
+            cleanId = cleanId.replaceAll("\\-\\d+$", "");
+        }
 
-        if (matcher.find()) {
-            String[] wineVersions = context.getResources().getStringArray(R.array.wine_entries);
-            for (String wineVersion : wineVersions) {
-                if (wineVersion.contains(identifier)) {
-                    path = imageFs.getRootDir().getPath() + "/opt/" + identifier;
+        String type = cleanId.contains("proton") ? "proton" : "wine";
+        String arch = cleanId.contains("arm64ec") ? "arm64ec" : (cleanId.contains("x86_64") ? "x86_64" : "x86");
+        String version = "9.0";
+        Matcher m = Pattern.compile("(\\d+(\\.\\d+)*)").matcher(cleanId);
+        if (m.find()) {
+            version = m.group(1);
+        }
+
+        // Resolve absolute path on disk
+        String path = "";
+        File optPath = new File(imageFs.getRootDir(), "opt/" + cleanId);
+        File optRaw = new File(imageFs.getRootDir(), "opt/" + identifier);
+        if (optPath.exists() && (new File(optPath, "bin").exists() || new File(optPath, "lib").exists())) {
+            path = optPath.getAbsolutePath();
+        } else if (optRaw.exists() && (new File(optRaw, "bin").exists() || new File(optRaw, "lib").exists())) {
+            path = optRaw.getAbsolutePath();
+        } else if (wineProfile != null) {
+            File installDir = ContentsManager.getInstallDir(context, wineProfile);
+            if (installDir.exists()) path = installDir.getAbsolutePath();
+        }
+
+        if (path.isEmpty()) {
+            File protonContents = ContentsManager.getContentTypeDir(context, ContentProfile.ContentType.CONTENT_TYPE_PROTON);
+            File wineContents = ContentsManager.getContentTypeDir(context, ContentProfile.ContentType.CONTENT_TYPE_WINE);
+            File[] searchDirs = new File[] { protonContents, wineContents };
+            for (File parentDir : searchDirs) {
+                if (parentDir == null || !parentDir.exists()) continue;
+                File direct = new File(parentDir, identifier);
+                if (direct.exists() && (new File(direct, "bin").exists() || new File(direct, "lib").exists())) {
+                    path = direct.getAbsolutePath();
                     break;
                 }
+                File directClean = new File(parentDir, cleanId);
+                if (directClean.exists() && (new File(directClean, "bin").exists() || new File(directClean, "lib").exists())) {
+                    path = directClean.getAbsolutePath();
+                    break;
+                }
+                File[] children = parentDir.listFiles();
+                if (children != null) {
+                    for (File child : children) {
+                        if (child.isDirectory() && (child.getName().equalsIgnoreCase(identifier) || child.getName().equalsIgnoreCase(cleanId) || child.getName().startsWith(cleanId + "-") || cleanId.startsWith(child.getName()))) {
+                            if (new File(child, "bin").exists() || new File(child, "lib").exists()) {
+                                path = child.getAbsolutePath();
+                                break;
+                            }
+                        }
+                    }
+                }
+                if (!path.isEmpty()) break;
             }
-
-            if (wineProfile != null && (wineProfile.type == ContentProfile.ContentType.CONTENT_TYPE_WINE || wineProfile.type == ContentProfile.ContentType.CONTENT_TYPE_PROTON))
-                path = contentsManager.getInstallDir(context, wineProfile).getPath();
-
-            return new WineInfo(matcher.group(1), matcher.group(2), matcher.group(4), path);
         }
-        else return new WineInfo(MAIN_WINE_VERSION.type, MAIN_WINE_VERSION.version, MAIN_WINE_VERSION.arch, imageFs.getRootDir().getPath() + "/opt/" + MAIN_WINE_VERSION.identifier());
+
+        if (path.isEmpty()) {
+            File optDir = new File(imageFs.getRootDir(), "opt");
+            File[] optChildren = optDir.listFiles();
+            if (optChildren != null) {
+                for (File child : optChildren) {
+                    if (child.isDirectory() && (child.getName().equalsIgnoreCase(identifier) || child.getName().equalsIgnoreCase(cleanId) || child.getName().startsWith(cleanId + "-") || cleanId.startsWith(child.getName()))) {
+                        if (new File(child, "bin").exists() || new File(child, "lib").exists()) {
+                            path = child.getAbsolutePath();
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        if (path.isEmpty()) {
+            path = imageFs.getRootDir().getPath() + "/opt/" + cleanId;
+        }
+
+        Log.d("WineInfo", "Resolved WineInfo: type=" + type + ", ver=" + version + ", arch=" + arch + ", path=" + path);
+        return new WineInfo(type, version, arch, path);
     }
 
     public static boolean isMainWineVersion(String wineVersion) {

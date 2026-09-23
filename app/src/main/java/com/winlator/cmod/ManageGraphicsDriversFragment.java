@@ -101,6 +101,8 @@ public class ManageGraphicsDriversFragment extends Fragment {
         recyclerView = view.findViewById(R.id.RecyclerView);
         recyclerView.setLayoutManager(new LinearLayoutManager(getContext()));
 
+        ThemeManager.applyThemeToView(view, getContext());
+
         loadDrivers();
 
         return view;
@@ -116,10 +118,8 @@ public class ManageGraphicsDriversFragment extends Fragment {
         new Thread(() -> {
             driverList.clear();
             driverList.add(new DriverInfo("wrapper.tzst"));
-            driverList.add(new DriverInfo("wrapper-leegao.tzst"));
-            driverList.add(new DriverInfo("wrapper-v2.tzst"));
-            driverList.add(new DriverInfo("wrapper-gamenative.tzst"));
             driverList.add(new DriverInfo("leegao_bcn.tzst"));
+            driverList.add(new DriverInfo("gladio-1.1.tzst"));
             driverList.add(new DriverInfo("extra_libs.tzst"));
 
             android.content.Context context = getContext();
@@ -189,8 +189,18 @@ public class ManageGraphicsDriversFragment extends Fragment {
         public void onBindViewHolder(@NonNull ViewHolder holder, int position) {
             DriverInfo info = data.get(position);
             holder.tvName.setText(info.fileName.replace(".tzst", ""));
-            String status = getString(info.isUpdated ? R.string.updated : R.string.bundled);
-            holder.tvVersion.setText(getString(R.string.version) + ": " + info.version + " (" + status + ")");
+            
+            android.content.Context ctx = holder.itemView.getContext();
+            ThemeManager.applyThemeToView(holder.itemView, ctx);
+
+            String statusStr;
+            if (info.isUpdated) {
+                int accentColor = ThemeManager.getAccentColor(ctx);
+                statusStr = "<font color='" + String.format("#%06X", (0xFFFFFF & accentColor)) + "'><b>" + getString(R.string.updated) + "</b></font>";
+            } else {
+                statusStr = getString(R.string.bundled);
+            }
+            holder.tvVersion.setText(Html.fromHtml(getString(R.string.version) + ": " + info.version + " (" + statusStr + ")", Html.FROM_HTML_MODE_LEGACY));
 
             holder.btInfo.setOnClickListener(v -> {
                 String details = "<b>File:</b> " + info.fileName + "<br/>" +

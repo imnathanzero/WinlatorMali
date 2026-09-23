@@ -16,6 +16,7 @@ import com.winlator.cmod.contents.ContentsManager;
 import com.winlator.cmod.core.AppUtils;
 import com.winlator.cmod.core.DefaultVersion;
 import com.winlator.cmod.core.EnvVars;
+import com.winlator.cmod.core.GPUInformation;
 import com.winlator.cmod.core.KeyValueSet;
 import com.winlator.cmod.core.StringUtils;
 import com.winlator.cmod.core.VKD3DVersionItem;
@@ -37,14 +38,14 @@ public class DXVKConfigDialog extends ContentDialog {
     public static final int DXVK_TYPE_ASYNC = 1;
     public static final int DXVK_TYPE_GPLASYNC = 2;
     private final ToggleButton swAsync;
-    private final ToggleButton swDXVKConfig;
+    private final ToggleButton swDxvkConfig;
     private boolean isARM64EC = false;
     private final ToggleButton swAsyncCache;
     private final View llAsync;
     private final View llAsyncCache;
     private final Context context;
     private List<String> dxvkVersions;
-    private static final Pattern SEMVER = Pattern.compile("(\\d+)\\.(\\d+)(?:\\.(\\d+))?");
+    private static final Pattern SEMVER = Pattern.compile("(?i)(?:v|dxvk[-_])?(\\d+)\\.(\\d+)(?:\\.(\\d+))?");
 
     private static Integer tryGetMajor(String s) {
         if (s == null) return null;
@@ -90,7 +91,7 @@ public class DXVKConfigDialog extends ContentDialog {
         final Spinner sDDRAWrapper = findViewById(R.id.SDDRAWrapper);
         final Spinner sMaxDeviceMemory = findViewById(R.id.SMaxDeviceMemory);
         swAsync = findViewById(R.id.SWAsync);
-        swDXVKConfig = findViewById(R.id.SWDXVKConfig);
+        swDxvkConfig = findViewById(R.id.SWDxvkConfig);
         swAsyncCache = findViewById(R.id.SWAsyncCache);
         llAsync = findViewById(R.id.LLAsync);
         llAsyncCache = findViewById(R.id.LLAsyncCache);
@@ -115,10 +116,30 @@ public class DXVKConfigDialog extends ContentDialog {
             sMaxDeviceMemory.setSelection(Integer.parseInt(config.get("maxDeviceMemory")));
         } catch (NumberFormatException e) {}
 
-        swAsync.setChecked(config.get("async").equals("1"));
-        swDXVKConfig.setChecked(config.get("dxvkConfig", "1").equals("1"));
-        swAsyncCache.setChecked(config.get("asyncCache").equals("1"));
-        findViewById(R.id.IVDXVKConfigInfo).setOnClickListener(v -> showDXVKConfigInfo());
+        swAsync.setChecked("1".equals(config.get("async", "0")));
+        swDxvkConfig.setChecked("1".equals(config.get("dxvkConfig", "1")));
+        swAsyncCache.setChecked("1".equals(config.get("asyncCache", "0")));
+
+        findViewById(R.id.BTHelpDxvkConfig).setOnClickListener(v -> {
+            ContentDialog dialog = new ContentDialog(getContext(), R.layout.bcn_info_dialog);
+            dialog.setTitle("Pre-Configured DXVK Config");
+            dialog.setIcon(R.drawable.ic_driver_info);
+
+            TextView tvMessage = dialog.findViewById(R.id.TVInfoMessage);
+            String message = "<b>Pre-Configured DXVK Optimizations:</b><br/><br/>" +
+                    "&#8226; <b>memoryTrack:</b> Enables strict tracking of memory allocations. Prevents \"Out of Memory\" crashes by ensuring the heap is managed correctly on Android's shared RAM architecture.<br/><br/>" +
+                    "&#8226; <b>nvapiHack:</b> Disables NVIDIA-specific spoofing. Prevents games from attempting to call proprietary NVIDIA features that cause crashes on mobile hardware.<br/><br/>" +
+                    "&#8226; <b>numCompilerThreads:</b> Limits shader compilation to 4 threads. Prevents CPU cores from maxing out, reducing heat and avoiding thermal throttling for a stable framerate.<br/><br/>" +
+                    "<b>Mali Specialized (Non-Adreno):</b><br/><br/>" +
+                    "&#8226; <b>relaxedBarriers / ignoreGraphicsBarriers:</b> Reduces GPU \"sync points.\" Mali drivers struggle with frequent barriers; disabling non-essential ones significantly boosts FPS by letting the GPU work continuously.<br/><br/>" +
+                    "&#8226; <b>useEarlyDiscard:</b> Discards hidden pixels early in the pipeline. Ideal for Mali's Tile-Based architecture, reducing \"overdraw\" to save GPU power and battery.<br/><br/>" +
+                    "&#8226; <b>shrinkBindingSlots:</b> Minimizes the internal resource table size. Reduces the overall VRAM footprint, leaving more memory available for actual game assets.<br/><br/>" +
+                    "&#8226; <b>maxQueuedFrames:</b> Limits the CPU to preparing only 1 frame ahead. Prevents input lag (latency) and avoids large memory backlogs that can lead to crashes.<br/><br/>" +
+                    "&#8226; <b>allowMapFlagNoWait:</b> Allows the CPU to update resources without waiting for GPU confirmation. Eliminates \"CPU stalls\" and micro-stutters.";
+            tvMessage.setText(android.text.Html.fromHtml(message, android.text.Html.FROM_HTML_MODE_LEGACY));
+            dialog.findViewById(R.id.BTCancel).setVisibility(View.GONE);
+            dialog.show();
+        });
 
         updateConfigVisibility(getDXVKType(sDXVKVersion.getSelectedItemPosition()));
 
@@ -137,35 +158,42 @@ public class DXVKConfigDialog extends ContentDialog {
         sVKD3DVersion.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
             @Override
             public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
-                String selectedVersion = sVKD3DVersion.getSelectedItem().toString();
-                String currentDXVKVersion = config.get("version");
+                Object selectedObj = sVKD3DVersion.getSelectedItem();
+                String selectedVersion = selectedObj != null ? selectedObj.toString() : "None";
+                String currentDXVKVersion = sDXVKVersion.getSelectedItem() != null ? sDXVKVersion.getSelectedItem().toString() : config.get("version");
 
-                if (!selectedVersion.equals("None")) {
-                    ArrayList<String> versions = new ArrayList<>();
+                loadDxvkVersionSpinner(contentsManager, sDXVKVersion, isARM64EC);
 
-                    for (int i = 0; i < dxvkVersions.size(); i++) {
-                        Integer major = tryGetMajor(dxvkVersions.get(i));
-                        if (major != null && major < 2) {
-                            versions.add(dxvkVersions.get(i));
+                if (!selectedVersion.equals("None") && !selectedVersion.equalsIgnoreCase("none")) {
+                    List<String> filteredList = new ArrayList<>();
+                    for (String ver : dxvkVersions) {
+                        Integer major = tryGetMajor(ver);
+                        if (major == null || major >= 2) {
+                            filteredList.add(ver);
                         }
                     }
 
-                    dxvkVersions.removeAll(versions);
+                    if (!filteredList.isEmpty()) {
+                        dxvkVersions = filteredList;
+                        ArrayAdapter<String> adapter = new ArrayAdapter<>(context, android.R.layout.simple_spinner_dropdown_item, dxvkVersions);
+                        sDXVKVersion.setAdapter(adapter);
 
-                    ArrayAdapter<String> adapter = new ArrayAdapter<>(context, android.R.layout.simple_spinner_dropdown_item, dxvkVersions);
-                    sDXVKVersion.setAdapter(adapter);
-
-                    Integer curMajor = tryGetMajor(currentDXVKVersion);
-                    AppUtils.setSpinnerSelectionFromIdentifier(
-                            sDXVKVersion,
-                            (curMajor != null && curMajor >= 2) ? currentDXVKVersion : DefaultVersion.DXVK
-                    );
-                    updateConfigVisibility(getDXVKType(sDXVKVersion.getSelectedItemPosition()));
+                        Integer curMajor = tryGetMajor(currentDXVKVersion);
+                        if (curMajor != null && curMajor >= 2 && dxvkVersions.contains(currentDXVKVersion)) {
+                            AppUtils.setSpinnerSelectionFromIdentifier(sDXVKVersion, currentDXVKVersion);
+                        } else {
+                            // Select first available 2.x version or DefaultVersion.DXVK if present
+                            if (dxvkVersions.contains(DefaultVersion.DXVK)) {
+                                AppUtils.setSpinnerSelectionFromIdentifier(sDXVKVersion, DefaultVersion.DXVK);
+                            } else {
+                                sDXVKVersion.setSelection(0, false);
+                            }
+                        }
+                    }
+                } else {
+                    AppUtils.setSpinnerSelectionFromIdentifier(sDXVKVersion, currentDXVKVersion);
                 }
-                else {
-                    loadDxvkVersionSpinner(contentsManager, sDXVKVersion, isARM64EC);
-                    AppUtils.setSpinnerSelectionFromIdentifier(sDXVKVersion, config.get("version"));
-                }
+                updateConfigVisibility(getDXVKType(sDXVKVersion.getSelectedItemPosition()));
             }
 
             @Override
@@ -177,9 +205,13 @@ public class DXVKConfigDialog extends ContentDialog {
             if (sDXVKVersion.getSelectedItem() != null) config.put("version", sDXVKVersion.getSelectedItem().toString());
             config.put("async", ((swAsync.isChecked())&&(llAsync.getVisibility()==View.VISIBLE))?"1":"0");
             config.put("asyncCache", ((swAsyncCache.isChecked())&&(llAsyncCache.getVisibility()==View.VISIBLE))?"1":"0");
-            config.put("dxvkConfig", swDXVKConfig.isChecked() ? "1" : "0");
-            VKD3DVersionItem selectedItem = (VKD3DVersionItem) sVKD3DVersion.getSelectedItem();
-            if (selectedItem != null) config.put("vkd3dVersion", selectedItem.getIdentifier());
+            config.put("dxvkConfig", swDxvkConfig.isChecked() ? "1" : "0");
+            Object selectedItem = sVKD3DVersion.getSelectedItem();
+            if (selectedItem instanceof VKD3DVersionItem) {
+                config.put("vkd3dVersion", ((VKD3DVersionItem) selectedItem).getIdentifier());
+            } else if (selectedItem != null) {
+                config.put("vkd3dVersion", selectedItem.toString());
+            }
             if (sVKD3DFeatureLevel.getSelectedItem() != null) config.put("vkd3dLevel", sVKD3DFeatureLevel.getSelectedItem().toString());
             if (sDDRAWrapper.getSelectedItem() != null) config.put("ddrawrapper", StringUtils.parseIdentifier(sDDRAWrapper.getSelectedItem().toString()));
             config.put("maxDeviceMemory", String.valueOf(sMaxDeviceMemory.getSelectedItemPosition()));
@@ -214,29 +246,33 @@ public class DXVKConfigDialog extends ContentDialog {
     private void setDXVKSpinner(Spinner sDXVKVersion, KeyValueSet config, ContentsManager contentsManager, boolean isARM64EC) {
         String selectedVersion = config.get("vkd3dVersion");
         String currentDXVKVersion = config.get("version");
-        if (!selectedVersion.equals("None")) {
-            ArrayList<String> versions = new ArrayList<>();
-
-            for (int i = 0; i < dxvkVersions.size(); i++) {
-                Integer major = tryGetMajor(dxvkVersions.get(i));
-                if (major != null && major < 2) {
-                    versions.add(dxvkVersions.get(i));
+        if (selectedVersion != null && !selectedVersion.equals("None") && !selectedVersion.equalsIgnoreCase("none")) {
+            List<String> filteredList = new ArrayList<>();
+            for (String ver : dxvkVersions) {
+                Integer major = tryGetMajor(ver);
+                if (major == null || major >= 2) {
+                    filteredList.add(ver);
                 }
             }
+            if (!filteredList.isEmpty()) {
+                dxvkVersions = filteredList;
+                ArrayAdapter<String> adapter = new ArrayAdapter<>(context, android.R.layout.simple_spinner_dropdown_item, dxvkVersions);
+                sDXVKVersion.setAdapter(adapter);
 
-            dxvkVersions.removeAll(versions);
-
-            ArrayAdapter<String> adapter = new ArrayAdapter<>(context, android.R.layout.simple_spinner_dropdown_item, dxvkVersions);
-            sDXVKVersion.setAdapter(adapter);
-
-            Integer curMajor = tryGetMajor(currentDXVKVersion);
-            AppUtils.setSpinnerSelectionFromIdentifier(
-                    sDXVKVersion,
-                    (curMajor != null && curMajor >= 2) ? currentDXVKVersion : DefaultVersion.DXVK
-            );
-        }
-        else
+                Integer curMajor = tryGetMajor(currentDXVKVersion);
+                if (curMajor != null && curMajor >= 2 && dxvkVersions.contains(currentDXVKVersion)) {
+                    AppUtils.setSpinnerSelectionFromIdentifier(sDXVKVersion, currentDXVKVersion);
+                } else {
+                    if (dxvkVersions.contains(DefaultVersion.DXVK)) {
+                        AppUtils.setSpinnerSelectionFromIdentifier(sDXVKVersion, DefaultVersion.DXVK);
+                    } else {
+                        sDXVKVersion.setSelection(0, false);
+                    }
+                }
+            }
+        } else {
             AppUtils.setSpinnerSelectionFromIdentifier(sDXVKVersion, currentDXVKVersion);
+        }
     }
 
     public static KeyValueSet parseConfig(Object config) {
@@ -245,7 +281,7 @@ public class DXVKConfigDialog extends ContentDialog {
     }
 
     public static void setEnvVars(Context context, KeyValueSet config, EnvVars envVars) {
-        boolean dxvkConfigEnabled = config.get("dxvkConfig", "1").equals("1");
+        boolean dxvkConfigEnabled = "1".equals(config.get("dxvkConfig", "1"));
         File configFile = new File(context.getFilesDir(), "imagefs/home/xuser/.config/dxvk.conf");
 
         if (dxvkConfigEnabled) {
@@ -262,26 +298,26 @@ public class DXVKConfigDialog extends ContentDialog {
             }
 
             // Initialize default global optimizations for DXVK
-            String content = "dxgi.nvapiHack = True\n" +
-                             "dxvk.useRawSsbo = True\n" +
-                             "d3d11.allowMapFlagNoWait = True\n" +
-                             "d3d11.dcSingleUseMode = True\n" +
-                             "d3d11.relaxedBarriers = True\n" +
-                             "d3d9.allowDirectBufferMapping = True\n" +
-                             "d3d9.maxFrameLatency = 1\n" +
-                             "dxvk.deferSurfaceCreation = True\n" +
-                             "dxvk.maxFrameLatency = 1\n" +
-                             "dxvk.enableAsync = True\n" +
-                             "dxvk.numCompilerThreads = 2\n" +
-                             "dxvk.memoryTrack = False\n" +
-                             "dxvk.presentThrottle = 0\n" +
-                             "dxvk.debugLayer = False\n";
+            StringBuilder content = new StringBuilder();
+            content.append("dxvk.memoryTrack = True\n");
+            content.append("dxgi.nvapiHack = False\n");
+            content.append("dxvk.numCompilerThreads = 4\n");
+
+            // Mali and non-Adreno specialized optimizations
+            if (!GPUInformation.isAdrenoGPU(context)) {
+                content.append("d3d11.relaxedBarriers = True\n");
+                content.append("d3d11.ignoreGraphicsBarriers = True\n");
+                content.append("dxvk.useEarlyDiscard = True\n");
+                content.append("d3d11.allowMapFlagNoWait = True\n");
+                content.append("dxvk.shrinkBindingSlots = True\n");
+                content.append("d3d11.maxQueuedFrames = 1\n");
+            }
 
             if (!maxDeviceMemoryValue.isEmpty()) {
-                content += "dxgi.maxDeviceMemory = " + maxDeviceMemoryValue + "\n";
-                content += "dxgi.maxSharedMemory = " + maxDeviceMemoryValue + "\n";
-                content += "d3d9.maxDeviceMemory = " + maxDeviceMemoryValue + "\n";
-                content += "d3d9.maxAvailableMemory = " + maxDeviceMemoryValue + "\n";
+                content.append("dxgi.maxDeviceMemory = ").append(maxDeviceMemoryValue).append("\n");
+                content.append("dxgi.maxSharedMemory = ").append(maxDeviceMemoryValue).append("\n");
+                content.append("d3d9.maxDeviceMemory = ").append(maxDeviceMemoryValue).append("\n");
+                content.append("d3d9.maxAvailableMemory = ").append(maxDeviceMemoryValue).append("\n");
             }
 
             try {
@@ -289,7 +325,7 @@ public class DXVKConfigDialog extends ContentDialog {
                 if (configFile.exists()) configFile.delete();
                 try (FileOutputStream fos = new FileOutputStream(configFile);
                      OutputStreamWriter osw = new OutputStreamWriter(fos, StandardCharsets.UTF_8)) {
-                    osw.write(content);
+                    osw.write(content.toString());
                 }
                 envVars.put("DXVK_CONFIG_FILE", configFile.getAbsolutePath());
             } catch (Exception e) {}
@@ -316,10 +352,14 @@ public class DXVKConfigDialog extends ContentDialog {
         String[] originalItems = context.getResources().getStringArray(R.array.dxvk_version_entries);
         List<String> itemList = new ArrayList<>(Arrays.asList(originalItems));
 
-        for (ContentProfile profile : manager.getProfiles(ContentProfile.ContentType.CONTENT_TYPE_DXVK)) {
-            String entryName = ContentsManager.getEntryName(profile);
-            int firstDashIndex = entryName.indexOf('-');
-            itemList.add(entryName.substring(firstDashIndex + 1));
+        for (ContentProfile profile : manager.getInstalledProfiles(ContentProfile.ContentType.CONTENT_TYPE_DXVK)) {
+            String verName = profile.verName != null ? profile.verName : "";
+            if (verName.startsWith("dxvk-")) {
+                verName = verName.substring("dxvk-".length());
+            }
+            if (!itemList.contains(verName)) {
+                itemList.add(verName);
+            }
         }
 
         for (int i = 0; i < itemList.size(); i++) {
@@ -339,46 +379,17 @@ public class DXVKConfigDialog extends ContentDialog {
         // Add predefined versions
         String[] originalItems = context.getResources().getStringArray(R.array.vkd3d_version_entries);
         for (String version : originalItems) {
-            itemList.add(new VKD3DVersionItem(version)); // For predefined versions, use 0 as verCode
+            itemList.add(new VKD3DVersionItem(version));
         }
 
         // Add installed content profiles
-        for (ContentProfile profile : manager.getProfiles(ContentProfile.ContentType.CONTENT_TYPE_VKD3D)) {
-            String displayName = profile.verName;  // Display name for the spinner
-            int versionCode = profile.verCode;     // Unique version code if available
+        for (ContentProfile profile : manager.getInstalledProfiles(ContentProfile.ContentType.CONTENT_TYPE_VKD3D)) {
+            String displayName = profile.verName;
+            int versionCode = profile.verCode;
             itemList.add(new VKD3DVersionItem(displayName, versionCode));
         }
 
         ArrayAdapter<VKD3DVersionItem> adapter = new ArrayAdapter<>(context, android.R.layout.simple_spinner_dropdown_item, itemList);
         spinner.setAdapter(adapter);
-    }
-
-    private void showDXVKConfigInfo() {
-        ContentDialog dialog = new ContentDialog(context, R.layout.lsfg_info_dialog);
-        dialog.setTitle("DXVK Config Defaults");
-        dialog.setIcon(R.drawable.ic_driver_info);
-
-        TextView tvMessage = dialog.findViewById(R.id.TVInfoMessage);
-        String message = "<b>Generated DXVK Configuration Defaults</b><br/><br/>" +
-                "When enabled, Winlator generates a <b>dxvk.conf</b> file at container start with the following optimization settings:<br/><br/>" +
-                "• <b>dxvk.enableAsync</b> = True<br/>" +
-                "• <b>dxvk.numCompilerThreads</b> = 2<br/>" +
-                "• <b>dxvk.memoryTrack</b> = False<br/>" +
-                "• <b>dxvk.presentThrottle</b> = 0<br/>" +
-                "• <b>dxvk.debugLayer</b> = False<br/>" +
-                "• <b>dxgi.nvapiHack</b> = True<br/>" +
-                "• <b>dxvk.useRawSsbo</b> = True<br/>" +
-                "• <b>d3d11.allowMapFlagNoWait</b> = True<br/>" +
-                "• <b>d3d11.dcSingleUseMode</b> = True<br/>" +
-                "• <b>d3d11.relaxedBarriers</b> = True<br/>" +
-                "• <b>d3d9.allowDirectBufferMapping</b> = True<br/>" +
-                "• <b>d3d9.maxFrameLatency</b> = 1<br/>" +
-                "• <b>dxvk.deferSurfaceCreation</b> = True<br/>" +
-                "• <b>dxvk.maxFrameLatency</b> = 1<br/><br/>" +
-                "It also dynamically appends memory limits based on your container configuration.";
-        tvMessage.setText(android.text.Html.fromHtml(message, android.text.Html.FROM_HTML_MODE_LEGACY));
-
-        dialog.findViewById(R.id.BTCancel).setVisibility(View.GONE);
-        dialog.show();
     }
 }

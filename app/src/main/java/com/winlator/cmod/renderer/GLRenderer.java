@@ -5,17 +5,17 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.opengl.GLES20;
 import android.opengl.GLSurfaceView;
+import android.os.Build;
 import android.util.Log;
 
 import com.winlator.cmod.R;
 import com.winlator.cmod.XrActivity;
+import com.winlator.cmod.core.GPUInformation;
 import com.winlator.cmod.math.Mathf;
 import com.winlator.cmod.math.XForm;
 import com.winlator.cmod.renderer.material.CursorMaterial;
 import com.winlator.cmod.renderer.material.ShaderMaterial;
 import com.winlator.cmod.renderer.material.WindowMaterial;
-import com.winlator.cmod.renderer.lsfg.LSFGManager;
-import com.winlator.cmod.renderer.lsfg.LSFGEffect;
 import com.winlator.cmod.widget.XServerView;
 import com.winlator.cmod.xserver.Bitmask;
 import com.winlator.cmod.xserver.Cursor;
@@ -28,14 +28,11 @@ import com.winlator.cmod.xserver.XLock;
 import com.winlator.cmod.xserver.XServer;
 
 import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.concurrent.locks.LockSupport;
 
 import javax.microedition.khronos.egl.EGLConfig;
 import javax.microedition.khronos.opengles.GL10;
-
-import android.graphics.Canvas;
-import android.graphics.Paint;
-import android.opengl.GLUtils;
-import java.util.Locale;
 
 public class GLRenderer implements GLSurfaceView.Renderer, WindowManager.OnWindowModificationListener, Pointer.OnPointerMotionListener, android.view.Choreographer.FrameCallback {
     public final XServerView xServerView;
@@ -58,19 +55,33 @@ public class GLRenderer implements GLSurfaceView.Renderer, WindowManager.OnWindo
     private boolean magnifierEnabled = true;
     public int surfaceWidth;
     public int surfaceHeight;
-    private long lastNanos = 0;
-    private int currentFpsLimit = 0;
+    private volatile int currentFpsLimit = 0;
+    private long nextRenderTimeNanos = 0;
     private final EffectComposer effectComposer;
-    private final LSFGManager lsfgManager;
-    private com.winlator.cmod.widget.WinlatorHUD winlatorHUD;
+    private volatile com.winlator.cmod.widget.WinlatorHUD winlatorHUD;
     private long fpsStartTime = 0;
     private float displayTotalFPS = 0;
     private boolean renderCursorEnabled = true;
+    private int regularFrameCount = 0;
+    private long lastPointerRenderTimeNs = 0;
+    private static final long MIN_POINTER_RENDER_INTERVAL_NS = 8_000_000L; // ~125 Hz max pointer render rate
+    private long lastDiagLogTime = 0;
+    private final java.util.concurrent.atomic.AtomicBoolean hasNewRealFrame = new java.util.concurrent.atomic.AtomicBoolean(true);
+    private final java.util.concurrent.atomic.AtomicInteger pendingApexFrames = new java.util.concurrent.atomic.AtomicInteger(0);
+
+    public boolean consumeNewRealFrame() {
+        return hasNewRealFrame.getAndSet(false);
+    }
+
+    public void markNewRealFrame() {
+        hasNewRealFrame.set(true);
+        int mult = ApexNativeBridge.nativeGetAutoMultiplier();
+        pendingApexFrames.set(Math.max(0, mult - 1));
+    }
 
     public GLRenderer(XServerView xServerView, XServer xServer) {
         this.xServerView = xServerView;
         this.xServer = xServer;
-        this.lsfgManager = new LSFGManager(this);
         this.effectComposer = new EffectComposer(this);
         rootCursorDrawable = createRootCursorDrawable();
 
@@ -87,24 +98,19 @@ public class GLRenderer implements GLSurfaceView.Renderer, WindowManager.OnWindo
 
     @Override
     public void onSurfaceCreated(GL10 gl, EGLConfig config) {
+        GPUInformation.setGlobalEGLContext();
         GPUImage.checkIsSupported();
-
-        GLES20.glFrontFace(GLES20.GL_CCW);
-        GLES20.glDisable(GLES20.GL_CULL_FACE);
 
         GLES20.glDisable(GLES20.GL_DEPTH_TEST);
         GLES20.glDepthMask(false);
 
-        GLES20.glEnable(GLES20.GL_BLEND);
-        GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA);
+        GLES20.glDisable(GLES20.GL_BLEND);
         GLES20.glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
 
-        // Reset LSFG GL resources on EGL context recreation to prevent freezing
-        if (effectComposer != null) {
-            LSFGEffect lsfgEffect = effectComposer.getEffect(LSFGEffect.class);
-            if (lsfgEffect != null) lsfgEffect.resetGLResources();
+        if (surfaceWidth > 0 && surfaceHeight > 0) {
+            ApexNativeBridge.nativeInit(surfaceWidth, surfaceHeight);
         }
-        lastNanos = 0;
+        nextRenderTimeNanos = 0;
     }
 
     @Override
@@ -122,42 +128,26 @@ public class GLRenderer implements GLSurfaceView.Renderer, WindowManager.OnWindo
         surfaceHeight = height;
         viewTransformation.update(width, height, xServer.screenInfo.width, xServer.screenInfo.height);
         viewportNeedsUpdate = true;
+        ApexNativeBridge.nativeUpdateDimensions(width, height);
+        markNewRealFrame();
     }
 
     @Override
     public void onDrawFrame(GL10 gl) {
-        // Locked Target FPS / Unlimited Pacing Rate Limiter (Direct GL Thread Pacing)
-        if (lsfgManager.isActive()) {
-            boolean shouldRateLimit = true;
-            if (lsfgManager.getTargetFPS() == 0 && lsfgManager.isPendingRealFrame()) {
-                shouldRateLimit = false;
+        boolean isApex = ApexNativeBridge.nativeIsActive();
+        int fpsLimit = isApex ? ApexNativeBridge.nativeGetTargetFPS() : 0;
+
+        if (fpsLimit > 0) {
+            long targetIntervalNanos = 1000000000L / fpsLimit;
+            long now = System.nanoTime();
+            if (nextRenderTimeNanos == 0 || (now - nextRenderTimeNanos) > targetIntervalNanos * 2 || now < nextRenderTimeNanos - targetIntervalNanos) {
+                nextRenderTimeNanos = now;
             }
-
-            if (shouldRateLimit) {
-                long targetIntervalNanos;
-                if (lsfgManager.getTargetFPS() > 0) {
-                    targetIntervalNanos = 1000000000L / lsfgManager.getTargetFPS();
-                } else {
-                    targetIntervalNanos = lsfgManager.getTypicalDeltaNanos() / Math.max(1, lsfgManager.getMultiplier());
-                }
-                long elapsed = System.nanoTime() - lastNanos;
-                if (elapsed < targetIntervalNanos) {
-                    long waitNanos = targetIntervalNanos - elapsed;
-                    try {
-                        Thread.sleep(waitNanos / 1000000L, (int) (waitNanos % 1000000L));
-                    } catch (InterruptedException e) {
-                        // Ignore
-                    }
-                }
+            long waitNanos = nextRenderTimeNanos - now;
+            if (waitNanos > 0) {
+                java.util.concurrent.locks.LockSupport.parkNanos(waitNanos);
             }
-        }
-        lastNanos = System.nanoTime();
-
-        // Prepare frame state once per draw cycle to avoid thread races
-        lsfgManager.prepareFrame();
-
-        if (lsfgManager.isActive() && !lsfgManager.shouldRender()) {
-            return;
+            nextRenderTimeNanos = Math.max(System.nanoTime(), nextRenderTimeNanos + targetIntervalNanos);
         }
 
         if (toggleFullscreen) {
@@ -166,14 +156,14 @@ public class GLRenderer implements GLSurfaceView.Renderer, WindowManager.OnWindo
             viewportNeedsUpdate = true;
         }
 
-        if (effectComposer.hasEffects()) {
+        if (effectComposer.hasEffects() || ApexNativeBridge.nativeIsActive()) {
             effectComposer.render();
         } else {
             drawFrame();
         }
 
+        regularFrameCount++;
         updateFPS();
-        lsfgManager.onPostDraw();
     }
 
     public void drawFrame() {
@@ -184,180 +174,156 @@ public class GLRenderer implements GLSurfaceView.Renderer, WindowManager.OnWindo
             xrFrame = XrActivity.getInstance().beginFrame(xrImmersive, XrActivity.getSBS());
         }
 
-        // Update the viewport if necessary
         if (viewportNeedsUpdate && magnifierEnabled) {
             if (fullscreen) {
                 GLES20.glViewport(0, 0, surfaceWidth, surfaceHeight);
-            }
-            else {
+            } else {
                 GLES20.glViewport(viewTransformation.viewOffsetX, viewTransformation.viewOffsetY, viewTransformation.viewWidth, viewTransformation.viewHeight);
             }
             viewportNeedsUpdate = false;
         }
 
-        if (!(lsfgManager.isActive() && lsfgManager.isGeneratedFrame())) {
-            // Clear the screen before drawing
-            GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
+        GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
+        renderScene();
 
-            // Apply basic transformations and draw windows
-            if (magnifierEnabled) {
-                // Apply magnifier transformations if enabled
-                float pointerX = 0;
-                float pointerY = 0;
-                float magnifierZoom = !screenOffsetYRelativeToCursor ? this.magnifierZoom : 1.0f;
-
-                if (magnifierZoom != 1.0f) {
-                    pointerX = Mathf.clamp(xServer.pointer.getX() * magnifierZoom - xServer.screenInfo.width * 0.5f, 0, xServer.screenInfo.width * Math.abs(1.0f - magnifierZoom));
-                }
-
-                if (screenOffsetYRelativeToCursor || magnifierZoom != 1.0f) {
-                    float scaleY = magnifierZoom != 1.0f ? Math.abs(1.0f - magnifierZoom) : 0.5f;
-                    float offsetY = xServer.screenInfo.height * (screenOffsetYRelativeToCursor ? 0.25f : 0.5f);
-                    pointerY = Mathf.clamp(xServer.pointer.getY() * magnifierZoom - offsetY, 0, xServer.screenInfo.height * scaleY);
-                }
-
-                XForm.makeTransform(tmpXForm2, -pointerX, -pointerY, magnifierZoom, magnifierZoom, 0);
-            } else {
-                if (!fullscreen) {
-                    int pointerY = 0;
-                    if (screenOffsetYRelativeToCursor) {
-                        short halfScreenHeight = (short) (xServer.screenInfo.height / 2);
-                        pointerY = Mathf.clamp(xServer.pointer.getY() - halfScreenHeight / 2, 0, halfScreenHeight);
-                    }
-
-                    XForm.makeTransform(tmpXForm2, viewTransformation.sceneOffsetX, viewTransformation.sceneOffsetY - pointerY, viewTransformation.sceneScaleX, viewTransformation.sceneScaleY, 0);
-
-                    GLES20.glEnable(GLES20.GL_SCISSOR_TEST);
-                    GLES20.glScissor(viewTransformation.viewOffsetX, viewTransformation.viewOffsetY, viewTransformation.viewWidth, viewTransformation.viewHeight);
-                } else {
-                    XForm.identity(tmpXForm2);
-                }
-            }
-
-            renderWindows();
-
-            // Render cursor if enabled
-            if (cursorVisible && renderCursorEnabled) renderCursor();
-
-            // Disable scissor test if magnifier is disabled and not in fullscreen mode
-            if (!magnifierEnabled && !fullscreen) {
-                GLES20.glDisable(GLES20.GL_SCISSOR_TEST);
-            }
-        }
-
-        // Finalize XR frame if supported
         if (xrFrame) {
             XrActivity.getInstance().endFrame();
-            XrActivity.updateControllers();
-            xServerView.requestRender();
         }
     }
 
-
-    @Override
-    public void onMapWindow(Window window) {
-        xServerView.queueEvent(this::updateScene);
-        if (!lsfgManager.isActive()) xServerView.requestRender();
-    }
-
-    @Override
-    public void onUnmapWindow(Window window) {
-        xServerView.queueEvent(this::updateScene);
-        if (!lsfgManager.isActive()) xServerView.requestRender();
-    }
-
-    @Override
-    public void onChangeWindowZOrder(Window window) {
-        xServerView.queueEvent(this::updateScene);
-        if (!lsfgManager.isActive()) xServerView.requestRender();
-    }
-
-    @Override
-    public void onUpdateWindowContent(Window window) {
-        lsfgManager.notifyRealFramePending();
-        if (!lsfgManager.isActive()) xServerView.requestRender();
-    }
-
-    @Override
-    public void onUpdateWindowGeometry(final Window window, boolean resized) {
-        if (resized) {
-            xServerView.queueEvent(this::updateScene);
+    public void setFpsLimit(int fpsLimit) {
+        this.currentFpsLimit = fpsLimit;
+        if (xServer != null && xServer.getFpsLimit() != fpsLimit) {
+            xServer.setFpsLimit(fpsLimit);
         }
-        else {
-        	xServerView.queueEvent(() -> updateWindowPosition(window));
-        	xServerView.queueEvent(this::updateScene);
+    }
+
+    public int getFpsLimit() {
+        return currentFpsLimit;
+    }
+
+    public void setWinlatorHUD(com.winlator.cmod.widget.WinlatorHUD hud) {
+        this.winlatorHUD = hud;
+        if (xServer != null && xServer.getWinlatorHUD() != hud) {
+            xServer.setWinlatorHUD(hud);
         }
-        if (!lsfgManager.isActive()) xServerView.requestRender();
     }
 
-    @Override
-    public void onUpdateWindowAttributes(Window window, Bitmask mask) {
-        if (mask.isSet(WindowAttributes.FLAG_CURSOR) && !lsfgManager.isActive()) xServerView.requestRender();
+    public com.winlator.cmod.widget.WinlatorHUD getWinlatorHUD() {
+        return this.winlatorHUD;
     }
 
-    @Override
-    public void onPointerMove(short x, short y) {
-        if (!lsfgManager.isActive()) xServerView.requestRender();
+    private void renderScene() {
+        if (magnifierEnabled) {
+            float f = !screenOffsetYRelativeToCursor ? magnifierZoom : 1.0f;
+            float f2 = 0.0f;
+            float clamp = f != 1.0f ? Mathf.clamp((xServer.pointer.getX() * f) - (xServer.screenInfo.width * 0.5f), 0.0f, xServer.screenInfo.width * Math.abs(1.0f - f)) : 0.0f;
+            if (screenOffsetYRelativeToCursor || f != 1.0f) {
+                f2 = Mathf.clamp((xServer.pointer.getY() * f) - (xServer.screenInfo.height * (screenOffsetYRelativeToCursor ? 0.25f : 0.5f)), 0.0f, xServer.screenInfo.height * (f != 1.0f ? Math.abs(1.0f - f) : 0.5f));
+            }
+            XForm.makeTransform(tmpXForm2, -clamp, -f2, f, f, 0.0f);
+        } else if (!fullscreen) {
+            int i = 0;
+            if (screenOffsetYRelativeToCursor) {
+                short s = (short) (xServer.screenInfo.height / 2);
+                i = Mathf.clamp(xServer.pointer.getY() - (s / 2), 0, (int) s);
+            }
+            XForm.makeTransform(tmpXForm2, viewTransformation.sceneOffsetX, viewTransformation.sceneOffsetY - i, viewTransformation.sceneScaleX, viewTransformation.sceneScaleY, 0.0f);
+            GLES20.glEnable(GLES20.GL_SCISSOR_TEST);
+            GLES20.glScissor(viewTransformation.viewOffsetX, viewTransformation.viewOffsetY, viewTransformation.viewWidth, viewTransformation.viewHeight);
+        } else {
+            XForm.identity(tmpXForm2);
+        }
+
+        renderWindows();
+
+        if (cursorVisible && renderCursorEnabled) {
+            renderCursor();
+        }
+
+        if (!magnifierEnabled && !fullscreen) {
+            GLES20.glDisable(GLES20.GL_SCISSOR_TEST);
+        }
     }
 
+    private void renderWindows() {
+        GLES20.glDisable(GLES20.GL_BLEND);
+        windowMaterial.use();
+        if (windowMaterial.uViewSize != -1) {
+            GLES20.glUniform2f(windowMaterial.uViewSize, xServer.screenInfo.width, xServer.screenInfo.height);
+        } else {
+            GLES20.glUniform2f(windowMaterial.getUniformLocation("viewSize"), xServer.screenInfo.width, xServer.screenInfo.height);
+        }
+        quadVertices.bind(windowMaterial.programId);
+
+        try (XLock lock = xServer.lock(XServer.Lockable.DRAWABLE_MANAGER)) {
+            Iterator<RenderableWindow> it = renderableWindows.iterator();
+            while (it.hasNext()) {
+                RenderableWindow next = it.next();
+                renderDrawable(next.content, next.rootX, next.rootY, windowMaterial);
+            }
+        }
+        quadVertices.disable();
+    }
 
     private void renderDrawable(Drawable drawable, int x, int y, ShaderMaterial material) {
         if (drawable == null) return;
         synchronized (drawable.renderLock) {
             Texture texture = drawable.getTexture();
             texture.updateFromDrawable(drawable);
-
-            XForm.set(tmpXForm1, x, y, drawable.width, drawable.height);
-
+            if (texture.isFlipY()) {
+                XForm.set(tmpXForm1, x, y + drawable.height, drawable.width, -drawable.height);
+            } else {
+                XForm.set(tmpXForm1, x, y, drawable.width, drawable.height);
+            }
             XForm.multiply(tmpXForm1, tmpXForm1, tmpXForm2);
-
             GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
             GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, texture.getTextureId());
-            GLES20.glUniform1i(material.getUniformLocation("texture"), 0);
-            GLES20.glUniform1fv(material.getUniformLocation("xform"), tmpXForm1.length, tmpXForm1, 0);
+
+            if (material instanceof WindowMaterial) {
+                WindowMaterial wm = (WindowMaterial) material;
+                if (wm.uTexture != -1) GLES20.glUniform1i(wm.uTexture, 0);
+                if (wm.uXForm != -1) GLES20.glUniform1fv(wm.uXForm, tmpXForm1.length, tmpXForm1, 0);
+            } else if (material instanceof CursorMaterial) {
+                CursorMaterial cm = (CursorMaterial) material;
+                if (cm.uTexture != -1) GLES20.glUniform1i(cm.uTexture, 0);
+                if (cm.uXForm != -1) GLES20.glUniform1fv(cm.uXForm, tmpXForm1.length, tmpXForm1, 0);
+            } else {
+                int uTex = material.getUniformLocation("texture");
+                if (uTex != -1) GLES20.glUniform1i(uTex, 0);
+                int uXf = material.getUniformLocation("xform");
+                if (uXf != -1) GLES20.glUniform1fv(uXf, tmpXForm1.length, tmpXForm1, 0);
+            }
+
             GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, quadVertices.count());
-            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, 0);
         }
     }
 
-    private void renderWindows() {
-        windowMaterial.use();
-        GLES20.glUniform2f(windowMaterial.getUniformLocation("viewSize"), xServer.screenInfo.width, xServer.screenInfo.height);
-        quadVertices.bind(windowMaterial.programId);
-
-        try (XLock lock = xServer.lock(XServer.Lockable.DRAWABLE_MANAGER)) {
-            for (RenderableWindow window : renderableWindows) {
-                renderDrawable(window.content, window.rootX, window.rootY, windowMaterial);
-            }
-        }
-
-        quadVertices.disable();
-
-        int error = GLES20.glGetError();
-        if (error != GLES20.GL_NO_ERROR) {
-            Log.e("GLRenderer", "OpenGL Error: " + error);
-        }
-
+    private Drawable createRootCursorDrawable() {
+        Context context = xServerView.getContext();
+        BitmapFactory.Options options = new BitmapFactory.Options();
+        options.inScaled = false;
+        return Drawable.fromBitmap(BitmapFactory.decodeResource(context.getResources(), R.drawable.cursor, options));
     }
 
-    private void renderCursor() {
-        cursorMaterial.use();
-        GLES20.glUniform2f(cursorMaterial.getUniformLocation("viewSize"), xServer.screenInfo.width, xServer.screenInfo.height);
-        quadVertices.bind(cursorMaterial.programId);
+    public ShaderMaterial getPassthroughMaterial() {
+        return windowMaterial;
+    }
 
-        try (XLock lock = xServer.lock(XServer.Lockable.DRAWABLE_MANAGER)) {
-            Window pointWindow = xServer.inputDeviceManager.getPointWindow();
-            Cursor cursor = pointWindow != null ? pointWindow.attributes.getCursor() : null;
-            short x = xServer.pointer.getClampedX();
-            short y = xServer.pointer.getClampedY();
+    public VertexAttribute getQuadVertices() {
+        return quadVertices;
+    }
 
-            if (cursor != null) {
-                if (cursor.isVisible()) renderDrawable(cursor.cursorImage, x - cursor.hotSpotX, y - cursor.hotSpotY, cursorMaterial);
-            }
-            else renderDrawable(rootCursorDrawable, x, y, cursorMaterial);
-        }
+    public int getSurfaceWidth() {
+        return surfaceWidth;
+    }
 
-        quadVertices.disable();
+    public int getSurfaceHeight() {
+        return surfaceHeight;
+    }
+
+    public boolean isFullscreen() {
+        return fullscreen;
     }
 
     public void toggleFullscreen() {
@@ -365,12 +331,8 @@ public class GLRenderer implements GLSurfaceView.Renderer, WindowManager.OnWindo
         xServerView.requestRender();
     }
 
-    private Drawable createRootCursorDrawable() {
-        Context context = xServerView.getContext();
-        BitmapFactory.Options options = new BitmapFactory.Options();
-        options.inScaled = false;
-        Bitmap bitmap = BitmapFactory.decodeResource(context.getResources(), R.drawable.cursor, options);
-        return Drawable.fromBitmap(bitmap);
+    public EffectComposer getEffectComposer() {
+        return effectComposer;
     }
 
     private void updateScene() {
@@ -382,22 +344,20 @@ public class GLRenderer implements GLSurfaceView.Renderer, WindowManager.OnWindo
 
     private void collectRenderableWindows(Window window, int x, int y) {
         if (!window.attributes.isMapped()) return;
-        if (window != xServer.windowManager.rootWindow) {
-            boolean viewable = true;
 
-            if (unviewableWMClasses != null) {
-                String wmClass = window.getClassName();
-                for (String unviewableWMClass : unviewableWMClasses) {
-                    if (wmClass.contains(unviewableWMClass)) {
-                        if (window.attributes.isEnabled()) window.disableAllDescendants();
-                        viewable = false;
-                        break;
-                    }
+        boolean isUnviewable = false;
+        if (unviewableWMClasses != null) {
+            String wmClass = window.getClassName();
+            for (String unviewableWMClass : unviewableWMClasses) {
+                if (wmClass.contains(unviewableWMClass)) {
+                    isUnviewable = true;
+                    break;
                 }
             }
+        }
 
-            if (viewable)
-                renderableWindows.add(new RenderableWindow(window.getContent(), x, y));
+        if (!isUnviewable) {
+            renderableWindows.add(new RenderableWindow(window.getContent(), x, y));
         }
 
         for (Window child : window.getChildren()) {
@@ -405,23 +365,90 @@ public class GLRenderer implements GLSurfaceView.Renderer, WindowManager.OnWindo
         }
     }
 
-    private void removeRenderableWindow(Window window) {
-        for (int i = 0; i < renderableWindows.size(); i++) {
-            if (renderableWindows.get(i).content == window.getContent()) {
-                renderableWindows.remove(i);
-                break;
-            }
+    @Override
+    public void onMapWindow(Window window) {
+        xServerView.queueEvent(this::updateScene);
+        if (!ApexNativeBridge.nativeIsActive()) xServerView.requestRender();
+    }
+
+    @Override
+    public void onUnmapWindow(Window window) {
+        xServerView.queueEvent(this::updateScene);
+        if (!ApexNativeBridge.nativeIsActive()) xServerView.requestRender();
+    }
+
+    @Override
+    public void onChangeWindowZOrder(Window window) {
+        markNewRealFrame();
+        xServerView.queueEvent(this::updateScene);
+        if (!ApexNativeBridge.nativeIsActive()) xServerView.requestRender();
+    }
+
+    @Override
+    public void onUpdateWindowContent(Window window) {
+        markNewRealFrame();
+        xServerView.requestRender();
+    }
+
+    @Override
+    public void onUpdateWindowContentDirect(Window window, Drawable drawable) {
+        onUpdateWindowContent(window);
+    }
+
+    @Override
+    public void onUpdateWindowGeometry(Window window, boolean resized) {
+        markNewRealFrame();
+        xServerView.queueEvent(this::updateScene);
+        xServerView.requestRender();
+    }
+
+    @Override
+    public void onUpdateWindowAttributes(Window window, Bitmask mask) {
+        if (mask.isSet(WindowAttributes.FLAG_CURSOR)) {
+            xServerView.requestRender();
         }
     }
 
-    private void updateWindowPosition(Window window) {
-        for (RenderableWindow renderableWindow : renderableWindows) {
-            if (renderableWindow.content == window.getContent()) {
-                renderableWindow.rootX = window.getRootX();
-                renderableWindow.rootY = window.getRootY();
-                break;
-            }
+    @Override
+    public void onPointerMove(short x, short y) {
+        // In relative mouse mode or when cursor is hidden, game rendering is driven by
+        // window content changes, not pointer movement. Skip redundant render requests
+        // to prevent high-polling-rate mice (500-1000 Hz) from flooding the GPU pipeline.
+        if (xServer.isRelativeMouseMovement() || !cursorVisible || !renderCursorEnabled) {
+            return;
         }
+        // Throttle cursor-driven renders to ~125 Hz to prevent a 1000 Hz mouse
+        // from forcing 1000 render passes/sec on a RENDERMODE_WHEN_DIRTY surface.
+        long now = System.nanoTime();
+        if (now - lastPointerRenderTimeNs >= MIN_POINTER_RENDER_INTERVAL_NS) {
+            lastPointerRenderTimeNs = now;
+            xServerView.requestRender();
+        }
+    }
+
+    private void renderCursor() {
+        GLES20.glEnable(GLES20.GL_BLEND);
+        GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA);
+        cursorMaterial.use();
+        if (cursorMaterial.uViewSize != -1) {
+            GLES20.glUniform2f(cursorMaterial.uViewSize, xServer.screenInfo.width, xServer.screenInfo.height);
+        } else {
+            GLES20.glUniform2f(cursorMaterial.getUniformLocation("viewSize"), xServer.screenInfo.width, xServer.screenInfo.height);
+        }
+        quadVertices.bind(cursorMaterial.programId);
+
+        Window pointWindow = xServer.inputDeviceManager.getPointWindow();
+        Cursor cursor = pointWindow != null ? pointWindow.attributes.getCursor() : null;
+        short x = xServer.pointer.getClampedX();
+        short y = xServer.pointer.getClampedY();
+
+        if (cursor != null) {
+            if (cursor.isVisible()) renderDrawable(cursor.cursorImage, x - cursor.hotSpotX, y - cursor.hotSpotY, cursorMaterial);
+        } else {
+            renderDrawable(rootCursorDrawable, x, y, cursorMaterial);
+        }
+        quadVertices.disable();
+        GLES20.glDisable(GLES20.GL_BLEND);
     }
 
     public void setCursorVisible(boolean cursorVisible) {
@@ -429,26 +456,9 @@ public class GLRenderer implements GLSurfaceView.Renderer, WindowManager.OnWindo
         xServerView.requestRender();
     }
 
-    public boolean isCursorVisible() {
-        return cursorVisible;
-    }
-
-    public boolean isScreenOffsetYRelativeToCursor() {
-        return screenOffsetYRelativeToCursor;
-    }
-
     public void setScreenOffsetYRelativeToCursor(boolean screenOffsetYRelativeToCursor) {
         this.screenOffsetYRelativeToCursor = screenOffsetYRelativeToCursor;
         xServerView.requestRender();
-    }
-
-    public void setFullscreen(boolean fullscreen) {
-        this.fullscreen = fullscreen;
-        this.viewportNeedsUpdate = true;
-    }
-
-    public boolean isFullscreen() {
-        return fullscreen;
     }
 
     public float getMagnifierZoom() {
@@ -460,66 +470,9 @@ public class GLRenderer implements GLSurfaceView.Renderer, WindowManager.OnWindo
         xServerView.requestRender();
     }
 
-    public int getSurfaceWidth() {
-        return surfaceWidth;
-    }
-
-    public int getSurfaceHeight() {
-        return surfaceHeight;
-    }
-
-    public int getFpsLimit() {
-        return currentFpsLimit;
-    }
-
-    public void setFpsLimit(int fpsLimit) {
-        this.currentFpsLimit = fpsLimit;
-    }
-
-    public boolean isViewportNeedsUpdate() {
-        return viewportNeedsUpdate;
-    }
-
-    public void setViewportNeedsUpdate(boolean viewportNeedsUpdate) {
-        this.viewportNeedsUpdate = viewportNeedsUpdate;
-    }
-
-    public VertexAttribute getQuadVertices() {
-        return quadVertices;
-    }
-
-    public EffectComposer getEffectComposer (){
-        return effectComposer;
-    }
-
-    public LSFGManager getLSFGManager() {
-        return lsfgManager;
-    }
-
-    public void setWinlatorHUD(com.winlator.cmod.widget.WinlatorHUD winlatorHUD) {
-        this.winlatorHUD = winlatorHUD;
-    }
-
-    private void renderWindowEffect(Drawable drawable, int x, int y, ShaderMaterial material) {
-        // Implement the rendering effect logic here
-        synchronized (drawable.renderLock) {
-            Texture texture = drawable.getTexture();
-            texture.updateFromDrawable(drawable);
-
-            XForm.set(tmpXForm1, x, y, drawable.width, drawable.height);
-            XForm.multiply(tmpXForm1, tmpXForm1, tmpXForm2);
-
-            GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
-            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, texture.getTextureId());
-            if (GLES20.glIsTexture(texture.getTextureId()) == false) {
-                Log.e("GLRenderer", "Invalid texture binding!");
-            }
-
-            GLES20.glUniform1i(material.getUniformLocation("texture"), 0);
-            GLES20.glUniform1fv(material.getUniformLocation("xform"), tmpXForm1.length, tmpXForm1, 0);
-            GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, quadVertices.count());
-            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, 0);
-        }
+    public void setMagnifierEnabled(boolean magnifierEnabled) {
+        this.magnifierEnabled = magnifierEnabled;
+        xServerView.requestRender();
     }
 
     public void setUnviewableWMClasses(String... unviewableWMNames) {
@@ -529,17 +482,46 @@ public class GLRenderer implements GLSurfaceView.Renderer, WindowManager.OnWindo
     void updateFPS() {
         long now = System.nanoTime();
         if (fpsStartTime == 0) fpsStartTime = now;
-        
+
         long elapsedNanos = now - fpsStartTime;
         if (elapsedNanos >= 500000000L) {
             float delta = elapsedNanos / 1000000000.0f;
-            displayTotalFPS = (lsfgManager.getActualRealFrameCount() + lsfgManager.getGeneratedFrameCount()) / delta;
-            
-            if (winlatorHUD != null) {
-                winlatorHUD.setApexStats(displayTotalFPS, lsfgManager.getMultiplier(), lsfgManager.isActive());
+
+            if (ApexNativeBridge.nativeIsActive()) {
+                int sourceFPS = ApexNativeBridge.nativeGetSourceFPS();
+                int realPresentedFPS = ApexNativeBridge.nativeGetPresentedRealFPS();
+                int genFPS = ApexNativeBridge.nativeGetGenFPS();
+                float sourceRate = sourceFPS / delta;
+                float totalRate = (realPresentedFPS + genFPS) / delta;
+                displayTotalFPS = totalRate;
+                
+                float liveMultiplier = 1.0f;
+                if (sourceRate > 0.5f) {
+                    liveMultiplier = Math.max(1.0f, totalRate / sourceRate);
+                } else if (totalRate > 0.5f) {
+                    liveMultiplier = 2.0f;
+                }
+
+                if (winlatorHUD != null) {
+                    winlatorHUD.setApexStats(totalRate, sourceRate, liveMultiplier, true);
+                }
+                regularFrameCount = 0; // Reset even when Apex is active to avoid accumulation
+
+                if (now - lastDiagLogTime >= 2000000000L) {
+                    lastDiagLogTime = now;
+                    String diag = ApexNativeBridge.nativeGetDiagnostics();
+                    if (diag != null && !diag.isEmpty()) {
+                        android.util.Log.i("ApexDIS", diag);
+                    }
+                }
+            } else {
+                displayTotalFPS = regularFrameCount / delta;
+                regularFrameCount = 0;
+                if (winlatorHUD != null) {
+                    winlatorHUD.setApexStats(displayTotalFPS, displayTotalFPS, 1.0f, false);
+                }
             }
 
-            lsfgManager.resetFrameCounts();
             fpsStartTime = now;
         }
     }
@@ -559,13 +541,29 @@ public class GLRenderer implements GLSurfaceView.Renderer, WindowManager.OnWindo
         choreographerRunning = false;
     }
 
+    private long lastChoreographerNanos = 0;
+
     @Override
     public void doFrame(long frameTimeNanos) {
         if (!choreographerRunning) return;
-        if (lsfgManager.isActive()) {
-            xServerView.requestRender();
+        if (ApexNativeBridge.nativeIsActive()) {
+            int targetFPS = ApexNativeBridge.nativeGetTargetFPS();
+            int multiplier = ApexNativeBridge.nativeGetAutoMultiplier();
+            boolean hasNew = hasNewRealFrame.get();
+
+            if (targetFPS > 0) {
+                long minInterval = (1000000000L / targetFPS) - 2000000L;
+                if (frameTimeNanos - lastChoreographerNanos >= minInterval) {
+                    lastChoreographerNanos = frameTimeNanos;
+                    xServerView.requestRender();
+                }
+            } else if (multiplier > 1 || hasNew) {
+                xServerView.requestRender();
+            }
+            android.view.Choreographer.getInstance().postFrameCallback(this);
+        } else {
+            choreographerRunning = false;
         }
-        android.view.Choreographer.getInstance().postFrameCallback(this);
     }
 
     public void setRenderCursorEnabled(boolean enabled) {
@@ -574,7 +572,6 @@ public class GLRenderer implements GLSurfaceView.Renderer, WindowManager.OnWindo
 
     public void drawCursorExplicitly() {
         if (cursorVisible) {
-            // Enable EGL blending for transparent cursor png drawing
             GLES20.glEnable(GLES20.GL_BLEND);
             GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA);
             renderCursor();

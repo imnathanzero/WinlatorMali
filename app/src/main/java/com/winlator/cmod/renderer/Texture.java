@@ -17,19 +17,39 @@ public class Texture {
     protected int format = GLES11Ext.GL_BGRA;
     protected boolean needsUpdate = true;
     protected byte unpackAlignment = 4; // or add a getter method
+    private boolean flipY = false;
+
+    public boolean isFlipY() {
+        return flipY;
+    }
+
+    public void setFlipY(boolean flipY) {
+        this.flipY = flipY;
+    }
 
 
     public void allocateTexture(short width, short height, ByteBuffer data) {
+        allocateTexture(width, height, width, data);
+    }
+
+    public void allocateTexture(short width, short height, short stride, ByteBuffer data) {
         int[] textureIds = new int[1];
         GLES20.glGenTextures(1, textureIds, 0);
         textureId = textureIds[0];
 
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
         GLES20.glPixelStorei(GLES20.GL_UNPACK_ALIGNMENT, 4);
+        if (stride > 0 && stride != width) {
+            android.opengl.GLES30.glPixelStorei(android.opengl.GLES30.GL_UNPACK_ROW_LENGTH, stride);
+        }
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, textureId);
 
         if (data != null) {
             GLES20.glTexImage2D(GLES20.GL_TEXTURE_2D, 0, format, width, height, 0, format, GLES20.GL_UNSIGNED_BYTE, data);
+        }
+
+        if (stride > 0 && stride != width) {
+            android.opengl.GLES30.glPixelStorei(android.opengl.GLES30.GL_UNPACK_ROW_LENGTH, 0);
         }
 
         GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, wrapS);
@@ -93,11 +113,17 @@ public class Texture {
         if (data == null) return;
 
         if (!isAllocated()) {
-            allocateTexture(drawable.width, drawable.height, data);
+            allocateTexture(drawable.width, drawable.height, drawable.getStride(), data);
         }
         else if (needsUpdate) {
             GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, textureId);
+            if (drawable.getStride() > 0 && drawable.getStride() != drawable.width) {
+                android.opengl.GLES30.glPixelStorei(android.opengl.GLES30.GL_UNPACK_ROW_LENGTH, drawable.getStride());
+            }
             GLES20.glTexSubImage2D(GLES20.GL_TEXTURE_2D, 0, 0, 0, drawable.width, drawable.height, format, GLES20.GL_UNSIGNED_BYTE, data);
+            if (drawable.getStride() > 0 && drawable.getStride() != drawable.width) {
+                android.opengl.GLES30.glPixelStorei(android.opengl.GLES30.GL_UNPACK_ROW_LENGTH, 0);
+            }
             GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, 0);
             needsUpdate = false;
         }
@@ -120,6 +146,13 @@ public class Texture {
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, 0);
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0);
         if (XrActivity.isEnabled(null)) XrActivity.getInstance().bindFramebuffer();
+    }
+
+    public void copyFromReadBuffer(short width, short height) {
+        if (!isAllocated()) allocateTexture(width, height, null);
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, textureId);
+        GLES20.glCopyTexImage2D(GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGBA, 0, 0, width, height, 0);
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, 0);
     }
 
     public void destroy() {

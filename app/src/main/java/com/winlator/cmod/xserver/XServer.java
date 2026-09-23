@@ -8,6 +8,7 @@ import com.winlator.cmod.winhandler.WinHandler;
 import com.winlator.cmod.xserver.extensions.BigReqExtension;
 import com.winlator.cmod.xserver.extensions.DRI3Extension;
 import com.winlator.cmod.xserver.extensions.Extension;
+import com.winlator.cmod.xserver.extensions.GLXExtension;
 import com.winlator.cmod.xserver.extensions.MITSHMExtension;
 import com.winlator.cmod.xserver.extensions.PresentExtension;
 import com.winlator.cmod.xserver.extensions.SyncExtension;
@@ -35,8 +36,13 @@ public class XServer {
     public final InputDeviceManager inputDeviceManager;
     public final GrabManager grabManager;
     public final CursorLocker cursorLocker;
+    private String displayDriver = "opengl";
+    private int surfaceFormat = 5; // HAL_PIXEL_FORMAT_BGRA_8888
+    private com.winlator.cmod.widget.DisplayXView displayXView;
     private SHMSegmentManager shmSegmentManager;
     private GLRenderer renderer;
+    private volatile com.winlator.cmod.widget.WinlatorHUD winlatorHUD;
+    private volatile int fpsLimit = 0;
     private WinHandler winHandler;
     private final EnumMap<Lockable, ReentrantLock> locks = new EnumMap<>(Lockable.class);
     private boolean relativeMouseMovement = false;
@@ -45,7 +51,20 @@ public class XServer {
     private XClient grabbingClient = null;
 
     public XServer(ScreenInfo screenInfo) {
+        this(screenInfo, "opengl", null);
+    }
+
+    public XServer(ScreenInfo screenInfo, String displayDriver, com.winlator.cmod.core.KeyValueSet displayxConfig) {
         this.screenInfo = screenInfo;
+        this.displayDriver = displayDriver != null ? displayDriver : "opengl";
+        if (isDisplayX() && displayxConfig != null) {
+            String sf = displayxConfig.get("surfaceFormat");
+            if ("bgra8".equalsIgnoreCase(sf)) {
+                this.surfaceFormat = 5; // HAL_PIXEL_FORMAT_BGRA_8888
+            } else {
+                this.surfaceFormat = 1; // HardwareBuffer.RGBA_8888
+            }
+        }
         cursorLocker = new CursorLocker(this);
         for (Lockable lockable : Lockable.values()) locks.put(lockable, new ReentrantLock());
 
@@ -59,6 +78,30 @@ public class XServer {
 
         DesktopHelper.attachTo(this);
         setupExtensions();
+    }
+
+    public String getDisplayDriver() {
+        return this.displayDriver;
+    }
+
+    public void setDisplayDriver(String displayDriver) {
+        this.displayDriver = displayDriver;
+    }
+
+    public boolean isDisplayX() {
+        return this.displayDriver != null && this.displayDriver.equalsIgnoreCase("displayx");
+    }
+
+    public int getSurfaceFormat() {
+        return this.surfaceFormat;
+    }
+
+    public com.winlator.cmod.widget.DisplayXView getDisplayXView() {
+        return displayXView;
+    }
+
+    public void setDisplayXView(com.winlator.cmod.widget.DisplayXView displayXView) {
+        this.displayXView = displayXView;
     }
 
     public boolean isRelativeMouseMovement() {
@@ -82,6 +125,36 @@ public class XServer {
 
     public void setRenderer(GLRenderer renderer) {
         this.renderer = renderer;
+        if (renderer != null) {
+            if (winlatorHUD != null) renderer.setWinlatorHUD(winlatorHUD);
+            if (fpsLimit > 0) renderer.setFpsLimit(fpsLimit);
+        }
+    }
+
+    public com.winlator.cmod.widget.WinlatorHUD getWinlatorHUD() {
+        return winlatorHUD;
+    }
+
+    public void setWinlatorHUD(com.winlator.cmod.widget.WinlatorHUD winlatorHUD) {
+        this.winlatorHUD = winlatorHUD;
+        if (renderer != null && renderer.getWinlatorHUD() != winlatorHUD) {
+            renderer.setWinlatorHUD(winlatorHUD);
+        }
+    }
+
+    public int getFpsLimit() {
+        return fpsLimit;
+    }
+
+    public void setFpsLimit(int fpsLimit) {
+        this.fpsLimit = fpsLimit;
+        if (renderer != null && renderer.getFpsLimit() != fpsLimit) {
+            renderer.setFpsLimit(fpsLimit);
+        }
+        com.winlator.cmod.xserver.extensions.PresentExtension presentExt = getExtension(com.winlator.cmod.xserver.extensions.PresentExtension.MAJOR_OPCODE);
+        if (presentExt != null) {
+            presentExt.onFpsLimitChanged(fpsLimit);
+        }
     }
 
     public WinHandler getWinHandler() {
@@ -196,6 +269,7 @@ public class XServer {
         extensions.put(DRI3Extension.MAJOR_OPCODE, new DRI3Extension());
         extensions.put(PresentExtension.MAJOR_OPCODE, new PresentExtension());
         extensions.put(SyncExtension.MAJOR_OPCODE, new SyncExtension());
+        extensions.put(GLXExtension.MAJOR_OPCODE, new GLXExtension(this));
     }
 
     public <T extends Extension> T getExtension(int opcode) {

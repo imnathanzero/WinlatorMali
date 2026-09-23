@@ -220,7 +220,9 @@ public class BCNConfigDialog extends ContentDialog {
                 "<b>Benefits:</b><br/>" +
                 "&#8226; <b>VRAM Savings:</b> Keeps textures compressed in GPU memory.<br/>" +
                 "&#8226; <b>Stability:</b> Prevents out-of-memory crashes in texture-heavy games.<br/><br/>" +
-                "<i>Note: Transcoding requires Compute Emulation mode.</i>";
+                "<b>Skip Compression on Small Textures:</b><br/>" +
+                "Avoids compressing low-resolution textures (like icons or UI elements) to prevent them from looking pixelated or blurry. This will slightly increase VRAM usage.<br/><br/>" +
+                "<i>Note: Transcoding and Skip Compression require Compute Emulation mode.</i>";
         tvMessage.setText(android.text.Html.fromHtml(message, android.text.Html.FROM_HTML_MODE_LEGACY));
         dialog.findViewById(R.id.BTCancel).setVisibility(View.GONE);
         dialog.show();

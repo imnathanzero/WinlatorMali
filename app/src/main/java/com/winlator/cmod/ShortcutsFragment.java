@@ -3,20 +3,25 @@ package com.winlator.cmod;
 import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.ShortcutInfo;
 import android.content.pm.ShortcutManager;
 import android.content.res.Configuration;
+import android.graphics.drawable.Drawable;
 import android.graphics.drawable.Icon;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.view.LayoutInflater;
+import android.view.Menu;
+import android.view.MenuInflater;
 import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
 import android.widget.ImageButton;
 import android.widget.ImageView;
+import android.util.TypedValue;
 import android.widget.PopupMenu;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -24,7 +29,10 @@ import android.widget.Toast;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.appcompat.widget.SearchView;
+import androidx.core.widget.TextViewCompat;
 import androidx.fragment.app.Fragment;
+import androidx.preference.PreferenceManager;
 import androidx.recyclerview.widget.GridLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
@@ -42,6 +50,7 @@ import com.winlator.cmod.core.ImageUtils;
 
 import java.io.File;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 import com.winlator.cmod.core.steamgrid.SteamGridDBApi;
@@ -52,12 +61,19 @@ public class ShortcutsFragment extends Fragment {
     private ContainerManager manager;
     private RecyclerView recyclerView;
     private Shortcut currentShortcut;
+    private ShortcutsAdapter adapter;
     private static final int REQUEST_CODE_CUSTOM_COVER_ART = 1;
+    private static final int REQUEST_CODE_IMPORT_SHORTCUT = 1002;
 
     @Override
     public void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        manager = new ContainerManager(getContext());
+        setHasOptionsMenu(true);
+        if (getActivity() instanceof MainActivity) {
+            manager = ((MainActivity) getActivity()).getContainerManager();
+        } else {
+            manager = new ContainerManager(getContext());
+        }
     }
 
     @Nullable
@@ -69,7 +85,11 @@ public class ShortcutsFragment extends Fragment {
     @Override
     public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
         super.onViewCreated(view, savedInstanceState);
-        ((AppCompatActivity)getActivity()).getSupportActionBar().setTitle(R.string.shortcuts);
+        ThemeManager.applyThemeToView(view, getContext());
+        androidx.appcompat.app.ActionBar actionBar = ((AppCompatActivity)getActivity()).getSupportActionBar();
+        if (actionBar != null) {
+            actionBar.setTitle("");
+        }
 
         recyclerView = view.findViewById(R.id.RecyclerView);
         updateGridLayout();
@@ -78,9 +98,102 @@ public class ShortcutsFragment extends Fragment {
     }
 
     @Override
+    public void onCreateOptionsMenu(@NonNull Menu menu, @NonNull MenuInflater inflater) {
+        menu.clear();
+        inflater.inflate(R.menu.shortcuts_menu, menu);
+
+        if (getContext() != null) {
+            int accent = ThemeManager.getAccentColor(getContext());
+            for (int i = 0; i < menu.size(); i++) {
+                MenuItem item = menu.getItem(i);
+                if (item.getIcon() != null) {
+                    Drawable icon = item.getIcon().mutate();
+                    icon.setTint(accent);
+                    item.setIcon(icon);
+                }
+            }
+        }
+
+        MenuItem searchItem = menu.findItem(R.id.shortcuts_menu_search);
+        if (searchItem != null) {
+            SearchView searchView = (SearchView) searchItem.getActionView();
+            if (searchView != null) {
+                searchView.setQueryHint(getString(R.string.search));
+                searchView.setOnQueryTextListener(new SearchView.OnQueryTextListener() {
+                    @Override
+                    public boolean onQueryTextSubmit(String query) {
+                        if (adapter != null) adapter.filter(query);
+                        return true;
+                    }
+
+                    @Override
+                    public boolean onQueryTextChange(String newText) {
+                        if (adapter != null) adapter.filter(newText);
+                        return true;
+                    }
+                });
+            }
+            searchItem.setOnActionExpandListener(new MenuItem.OnActionExpandListener() {
+                @Override
+                public boolean onMenuItemActionExpand(MenuItem item) {
+                    return true;
+                }
+
+                @Override
+                public boolean onMenuItemActionCollapse(MenuItem item) {
+                    if (adapter != null) adapter.filter("");
+                    return true;
+                }
+            });
+        }
+        super.onCreateOptionsMenu(menu, inflater);
+    }
+
+    @Override
+    public boolean onOptionsItemSelected(@NonNull MenuItem item) {
+        int id = item.getItemId();
+        if (id == R.id.shortcuts_menu_import) {
+            importShortcutWorkflow();
+            return true;
+        } else if (id == R.id.shortcuts_menu_sort) {
+            showSortDialog();
+            return true;
+        } else if (id == R.id.shortcuts_menu_refresh) {
+            loadShortcutsList();
+            return true;
+        }
+        return super.onOptionsItemSelected(item);
+    }
+
+    private void showSortDialog() {
+        Context context = getContext();
+        if (context == null) return;
+        String[] sortOptions = {
+            "Name (A to Z)",
+            "Name (Z to A)",
+            "Most Played",
+            "Longest Playtime",
+            "Container Name"
+        };
+        SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(context);
+        ContentDialog.showSingleChoiceList(context, "Sort Shortcuts", sortOptions, (index) -> {
+            prefs.edit().putInt("shortcuts_sort_order", index).apply();
+            if (adapter != null) {
+                adapter.setSortOrder(index);
+            }
+        });
+    }
+
+    @Override
     public void onConfigurationChanged(@NonNull Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
         updateGridLayout();
+        if (recyclerView != null) {
+            recyclerView.getRecycledViewPool().clear();
+            if (recyclerView.getAdapter() != null) {
+                recyclerView.getAdapter().notifyDataSetChanged();
+            }
+        }
     }
 
     @Override
@@ -91,32 +204,53 @@ public class ShortcutsFragment extends Fragment {
 
     private void updateGridLayout() {
         if (recyclerView == null) return;
-        int columns = 2;
         Configuration config = getResources().getConfiguration();
+        int columns = config.orientation == Configuration.ORIENTATION_LANDSCAPE ? 5 : 2;
         float density = getResources().getDisplayMetrics().density;
         int padding = (int) (8 * density);
 
-        if (config.orientation == Configuration.ORIENTATION_LANDSCAPE) {
-            columns = 5;
-        }
-
         recyclerView.setPadding(padding, 0, padding, 0);
         recyclerView.setClipToPadding(false);
-        recyclerView.setLayoutManager(new GridLayoutManager(getContext(), columns));
+        RecyclerView.LayoutManager lm = recyclerView.getLayoutManager();
+        if (lm instanceof GridLayoutManager) {
+            ((GridLayoutManager) lm).setSpanCount(columns);
+        } else {
+            recyclerView.setLayoutManager(new GridLayoutManager(getContext(), columns));
+        }
         recyclerView.invalidateItemDecorations();
     }
 
+    private final java.util.concurrent.ExecutorService shortcutLoaderExecutor = java.util.concurrent.Executors.newSingleThreadExecutor();
+
     public void loadShortcutsList() {
         com.winlator.cmod.container.Shortcut.setOnShortcutLoadedListener(shortcut -> {
-            if (getActivity() != null) {
+            if (getActivity() != null && recyclerView != null) {
                 getActivity().runOnUiThread(() -> {
-                    if (recyclerView != null && recyclerView.getAdapter() != null) {
-                        recyclerView.getAdapter().notifyDataSetChanged();
+                    if (adapter != null && adapter.data != null) {
+                        for (int i = 0; i < adapter.data.size(); i++) {
+                            Shortcut s = adapter.data.get(i);
+                            if (s != null && s.file != null && s.file.equals(shortcut.file)) {
+                                adapter.notifyItemChanged(i);
+                                break;
+                            }
+                        }
                     }
                 });
             }
         });
-        recyclerView.setAdapter(new ShortcutsAdapter(manager.loadShortcuts()));
+
+        shortcutLoaderExecutor.execute(() -> {
+            ArrayList<Shortcut> shortcuts = manager.loadShortcuts();
+            if (getActivity() != null) {
+                getActivity().runOnUiThread(() -> {
+                    if (recyclerView != null) {
+                        adapter = new ShortcutsAdapter(shortcuts);
+                        recyclerView.setAdapter(adapter);
+                        adapter.updateEmptyState();
+                    }
+                });
+            }
+        });
     }
 
     @Override
@@ -132,14 +266,235 @@ public class ShortcutsFragment extends Fragment {
             } catch (Exception e) {
                 Toast.makeText(getContext(), "Failed to update cover art.", Toast.LENGTH_SHORT).show();
             }
+        } else if (requestCode == REQUEST_CODE_IMPORT_SHORTCUT && resultCode == Activity.RESULT_OK && data != null) {
+            Uri uri = data.getData();
+            if (uri != null) {
+                handleImportedFile(uri);
+            }
+        }
+    }
+
+    private void importShortcutWorkflow() {
+        final Context context = getContext();
+        if (context == null) return;
+
+        final ArrayList<Container> containers = new ArrayList<>(manager.getContainers());
+        if (containers.isEmpty()) {
+            ContentDialog.alert(context, "No containers available. Please create a container first.", null);
+            return;
+        }
+
+        File exportDir = new File(com.winlator.cmod.SettingsFragment.DEFAULT_SHORTCUT_EXPORT_PATH);
+        final File[] files = exportDir.exists() ? exportDir.listFiles((dir, name) -> name.toLowerCase().endsWith(".desktop")) : null;
+
+        if (files != null && files.length > 0) {
+            String[] options = new String[files.length + 1];
+            for (int i = 0; i < files.length; i++) {
+                options[i] = files[i].getName().replace(".desktop", "");
+            }
+            options[files.length] = "📁 Browse from Storage...";
+
+            ContentDialog.showSingleChoiceList(context, "Select Shortcut to Import", options, index -> {
+                if (index < files.length) {
+                    copyDesktopFileToContainer(files[index], containers);
+                } else {
+                    browseAndImportShortcut();
+                }
+            });
+        } else {
+            browseAndImportShortcut();
+        }
+    }
+
+    private void browseAndImportShortcut() {
+        Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
+        intent.setType("*/*");
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        try {
+            startActivityForResult(Intent.createChooser(intent, "Select .desktop shortcut file"), REQUEST_CODE_IMPORT_SHORTCUT);
+        } catch (Exception e) {
+            Toast.makeText(getContext(), "No file browser found.", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private void handleImportedFile(Uri uri) {
+        final Context context = getContext();
+        if (context == null || uri == null) return;
+        final ArrayList<Container> containers = new ArrayList<>(manager.getContainers());
+        if (containers.isEmpty()) return;
+
+        try {
+            String fileName = "imported_shortcut.desktop";
+            android.database.Cursor cursor = context.getContentResolver().query(uri, null, null, null, null);
+            if (cursor != null) {
+                if (cursor.moveToFirst()) {
+                    int nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME);
+                    if (nameIndex >= 0) {
+                        fileName = cursor.getString(nameIndex);
+                    }
+                }
+                cursor.close();
+            }
+            if (!fileName.endsWith(".desktop")) fileName = fileName + ".desktop";
+
+            File tempFile = new File(context.getCacheDir(), fileName);
+            java.io.InputStream in = context.getContentResolver().openInputStream(uri);
+            java.io.FileOutputStream out = new java.io.FileOutputStream(tempFile);
+            byte[] buf = new byte[4096];
+            int len;
+            while ((len = in.read(buf)) > 0) {
+                out.write(buf, 0, len);
+            }
+            in.close();
+            out.close();
+
+            copyDesktopFileToContainer(tempFile, containers);
+        } catch (Exception e) {
+            Toast.makeText(context, "Failed to read shortcut file: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private void copyDesktopFileToContainer(File sourceFile, ArrayList<Container> containers) {
+        final Context context = getContext();
+        if (context == null || sourceFile == null || !sourceFile.exists()) return;
+
+        if (containers.size() == 1) {
+            doCopyDesktop(sourceFile, containers.get(0));
+        } else {
+            String[] containerNames = new String[containers.size()];
+            for (int i = 0; i < containers.size(); i++) {
+                containerNames[i] = containers.get(i).getName();
+            }
+            ContentDialog.showSingleChoiceList(context, "Target Container", containerNames, index -> {
+                doCopyDesktop(sourceFile, containers.get(index));
+            });
+        }
+    }
+
+    private void doCopyDesktop(File sourceFile, Container targetContainer) {
+        final Context context = getContext();
+        if (context == null || targetContainer == null) return;
+
+        File targetDir = targetContainer.getDesktopDir();
+        if (!targetDir.exists()) targetDir.mkdirs();
+
+        File targetFile = new File(targetDir, sourceFile.getName());
+        if (FileUtils.copy(sourceFile, targetFile)) {
+            Toast.makeText(context, "Shortcut '" + sourceFile.getName().replace(".desktop", "") + "' imported into " + targetContainer.getName(), Toast.LENGTH_LONG).show();
+            loadShortcutsList();
+        } else {
+            Toast.makeText(context, "Failed to import shortcut into container.", Toast.LENGTH_SHORT).show();
         }
     }
 
     private class ShortcutsAdapter extends RecyclerView.Adapter<ShortcutsAdapter.ViewHolder> {
-        private final List<Shortcut> data;
+        final List<Shortcut> originalData;
+        final List<Shortcut> data;
+        private String currentQuery = "";
+        private int currentSortOrder = 0;
 
-        public ShortcutsAdapter(List<Shortcut> data) {
-            this.data = data;
+        public ShortcutsAdapter(List<Shortcut> shortcuts) {
+            this.originalData = new ArrayList<>(shortcuts);
+            this.data = new ArrayList<>();
+            Context ctx = getContext();
+            if (ctx != null) {
+                this.currentSortOrder = PreferenceManager.getDefaultSharedPreferences(ctx).getInt("shortcuts_sort_order", 0);
+            }
+            applyFilterAndSort();
+        }
+
+        public void filter(String query) {
+            this.currentQuery = query != null ? query.trim().toLowerCase() : "";
+            applyFilterAndSort();
+            notifyDataSetChanged();
+            updateEmptyState();
+        }
+
+        public void setSortOrder(int sortOrder) {
+            this.currentSortOrder = sortOrder;
+            applyFilterAndSort();
+            notifyDataSetChanged();
+        }
+
+        private void applyFilterAndSort() {
+            data.clear();
+            for (Shortcut s : originalData) {
+                if (s == null) continue;
+                if (currentQuery.isEmpty()) {
+                    data.add(s);
+                } else {
+                    String name = s.name != null ? s.name.toLowerCase() : "";
+                    String containerName = (s.container != null && s.container.getName() != null) ? s.container.getName().toLowerCase() : "";
+                    String exe = s.getExecutable() != null ? s.getExecutable().toLowerCase() : "";
+                    if (name.contains(currentQuery) || containerName.contains(currentQuery) || exe.contains(currentQuery)) {
+                        data.add(s);
+                    }
+                }
+            }
+
+            Context ctx = getContext();
+            SharedPreferences pt = ctx != null ? ctx.getSharedPreferences("playtime_stats", Context.MODE_PRIVATE) : null;
+
+            switch (currentSortOrder) {
+                case 1: // Z to A
+                    data.sort((a, b) -> b.name.compareToIgnoreCase(a.name));
+                    break;
+                case 2: // Most Played
+                    if (pt != null) {
+                        data.sort((a, b) -> {
+                            int countA = pt.getInt(a.name + "_play_count", 0);
+                            int countB = pt.getInt(b.name + "_play_count", 0);
+                            if (countB != countA) return Integer.compare(countB, countA);
+                            return a.name.compareToIgnoreCase(b.name);
+                        });
+                    } else {
+                        data.sort((a, b) -> a.name.compareToIgnoreCase(b.name));
+                    }
+                    break;
+                case 3: // Longest Playtime
+                    if (pt != null) {
+                        data.sort((a, b) -> {
+                            long timeA = pt.getLong(a.name + "_playtime", 0L);
+                            long timeB = pt.getLong(b.name + "_playtime", 0L);
+                            if (timeB != timeA) return Long.compare(timeB, timeA);
+                            return a.name.compareToIgnoreCase(b.name);
+                        });
+                    } else {
+                        data.sort((a, b) -> a.name.compareToIgnoreCase(b.name));
+                    }
+                    break;
+                case 4: // By Container
+                    data.sort((a, b) -> {
+                        String cA = a.container != null ? a.container.getName() : "";
+                        String cB = b.container != null ? b.container.getName() : "";
+                        int cmp = cA.compareToIgnoreCase(cB);
+                        if (cmp != 0) return cmp;
+                        return a.name.compareToIgnoreCase(b.name);
+                    });
+                    break;
+                case 0: // A to Z (Default)
+                default:
+                    data.sort((a, b) -> a.name.compareToIgnoreCase(b.name));
+                    break;
+            }
+        }
+
+        public void updateEmptyState() {
+            View view = getView();
+            if (view == null) return;
+            View emptyView = view.findViewById(R.id.TVEmptyText);
+            if (emptyView instanceof TextView) {
+                TextView tv = (TextView) emptyView;
+                if (originalData.isEmpty()) {
+                    tv.setText(R.string.no_items_to_display);
+                    tv.setVisibility(View.VISIBLE);
+                } else if (data.isEmpty()) {
+                    tv.setText("No matching shortcuts found");
+                    tv.setVisibility(View.VISIBLE);
+                } else {
+                    tv.setVisibility(View.GONE);
+                }
+            }
         }
 
         @NonNull
@@ -152,7 +507,31 @@ public class ShortcutsFragment extends Fragment {
         public void onBindViewHolder(@NonNull ViewHolder holder, int position) {
             Shortcut item = data.get(position);
             holder.title.setText(item.name);
-            holder.subtitle.setText(item.container.getName());
+
+            boolean isLandscape = getResources().getConfiguration().orientation == Configuration.ORIENTATION_LANDSCAPE;
+            float titleSize = isLandscape ? 12.5f : 15.0f;
+
+            if (holder.title != null) {
+                holder.title.setTextSize(TypedValue.COMPLEX_UNIT_SP, titleSize);
+            }
+
+            String rawWine = item.getExtra("wineVersion", item.container.getWineVersion());
+            String displayWine = formatWineVersionForDisplay(rawWine);
+            if (displayWine.isEmpty()) displayWine = item.container.getName();
+            if (holder.subtitle != null) {
+                adjustTextSizeToFit(holder.subtitle, displayWine, 10.5f, 6.0f);
+            }
+
+            String gameVersion = item.getGameVersion();
+            if (gameVersion != null && !gameVersion.isEmpty()) {
+                String formattedVer = gameVersion.startsWith("v") || gameVersion.startsWith("V") ? gameVersion : "v" + gameVersion;
+                if (holder.version != null) {
+                    adjustTextSizeToFit(holder.version, formattedVer, 10.5f, 6.0f);
+                    holder.version.setVisibility(View.VISIBLE);
+                }
+            } else if (holder.version != null) {
+                holder.version.setVisibility(View.GONE);
+            }
 
             String remoteUrl = item.getCoverArtUrl();
             if (item.getCustomCoverArtPath().isEmpty() && remoteUrl != null) {
@@ -169,8 +548,54 @@ public class ShortcutsFragment extends Fragment {
                     .into(holder.coverArt);
             }
 
+            if (getContext() != null) {
+                int accent = ThemeManager.getAccentColor(getContext());
+                holder.menuButton.setImageTintList(android.content.res.ColorStateList.valueOf(accent));
+            }
+
             holder.menuButton.setOnClickListener((v) -> showListItemMenu(v, item));
             holder.innerArea.setOnClickListener((v) -> runFromShortcut(item));
+            holder.innerArea.setOnLongClickListener((v) -> {
+                showListItemMenu(holder.menuButton, item);
+                return true;
+            });
+        }
+
+        private void adjustTextSizeToFit(TextView textView, String text, float maxSp, float minSp) {
+            if (textView == null) return;
+            textView.setText(text != null ? text : "");
+            if (text == null || text.isEmpty()) return;
+
+            int width = textView.getWidth();
+            if (width > 0) {
+                applyFittedTextSize(textView, text, maxSp, minSp, width);
+            }
+
+            textView.post(() -> {
+                int w = textView.getWidth();
+                if (w > 0) {
+                    applyFittedTextSize(textView, text, maxSp, minSp, w);
+                }
+            });
+        }
+
+        private void applyFittedTextSize(TextView textView, String text, float maxSp, float minSp, int widthPx) {
+            float padding = textView.getCompoundPaddingLeft() + textView.getCompoundPaddingRight();
+            float availableWidth = widthPx - padding;
+            if (availableWidth <= 0) return;
+
+            android.text.TextPaint paint = new android.text.TextPaint(textView.getPaint());
+            float density = textView.getResources().getDisplayMetrics().scaledDensity;
+
+            float currentSp = maxSp;
+            while (currentSp > minSp) {
+                paint.setTextSize(currentSp * density);
+                if (paint.measureText(text) <= availableWidth) {
+                    break;
+                }
+                currentSp -= 0.25f;
+            }
+            textView.setTextSize(TypedValue.COMPLEX_UNIT_SP, currentSp);
         }
 
         @Override
@@ -184,6 +609,17 @@ public class ShortcutsFragment extends Fragment {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) listItemMenu.setForceShowIcon(true);
 
             listItemMenu.inflate(R.menu.shortcut_popup_menu);
+
+            Menu menu = listItemMenu.getMenu();
+            int accent = ThemeManager.getAccentColor(context);
+            for (int i = 0; i < menu.size(); i++) {
+                MenuItem item = menu.getItem(i);
+                if (item.getIcon() != null) {
+                    Drawable icon = item.getIcon().mutate();
+                    icon.setTint(accent);
+                    item.setIcon(icon);
+                }
+            }
 
             listItemMenu.setOnMenuItemClickListener((menuItem) -> {
                 int itemId = menuItem.getItemId();
@@ -212,6 +648,9 @@ public class ShortcutsFragment extends Fragment {
                             Toast.makeText(context, "Failed to clone shortcut.", Toast.LENGTH_SHORT).show();
                         }
                     });
+                }
+                else if (itemId == R.id.shortcut_save_manager) {
+                    new com.winlator.cmod.saves.SaveManagerDialog(getActivity(), shortcut).show();
                 }
                 else if (itemId == R.id.shortcut_add_to_home_screen) {
                     shortcut.genUUID();
@@ -596,21 +1035,151 @@ public class ShortcutsFragment extends Fragment {
         }
 
         private void showShortcutProperties(Shortcut shortcut) {
+            Context context = getContext();
+            if (context == null) return;
+
+            ContentDialog dialog = new ContentDialog(context, R.layout.shortcut_properties_dialog);
+            dialog.setTitle("Properties");
+            dialog.setIcon(R.drawable.ic_nav_info);
+
+            View cancelBtn = dialog.findViewById(R.id.BTCancel);
+            if (cancelBtn != null) cancelBtn.setVisibility(View.GONE);
+
+            android.content.SharedPreferences playtimePrefs = context.getSharedPreferences("playtime_stats", Context.MODE_PRIVATE);
+            String playtimeKey = shortcut.name + "_playtime";
+            String playCountKey = shortcut.name + "_play_count";
+
+            TextView tvPlayCount = dialog.findViewById(R.id.play_count);
+            TextView tvPlaytime = dialog.findViewById(R.id.playtime);
+            TextView tvDetails = dialog.findViewById(R.id.shortcut_details);
+            android.widget.Button btnReset = dialog.findViewById(R.id.reset_properties);
+
+            long totalMs = playtimePrefs.getLong(playtimeKey, 0L);
+            int playCount = playtimePrefs.getInt(playCountKey, 0);
+
+            long seconds = (totalMs / 1000) % 60;
+            long minutes = (totalMs / (1000 * 60)) % 60;
+            long hours = (totalMs / (1000 * 60 * 60)) % 24;
+            long days = (totalMs / (1000 * 60 * 60 * 24));
+            String formattedTime = String.format("%dd %02dh %02dm %02ds", days, hours, minutes, seconds);
+
+            if (tvPlayCount != null) tvPlayCount.setText("Number of times played: " + playCount);
+            if (tvPlaytime != null) tvPlaytime.setText("Playtime: " + formattedTime);
+
             StringBuilder sb = new StringBuilder();
-            sb.append("Name: ").append(shortcut.name).append("\n");
-            sb.append("Container: ").append(shortcut.container.getName()).append("\n");
-            sb.append("Path: ").append(shortcut.path).append("\n");
-            sb.append("File: ").append(shortcut.file.getPath());
-            ContentDialog dialog = new ContentDialog(getContext());
-            dialog.setTitle("Shortcut Properties");
-            dialog.setMessage(sb.toString());
+            sb.append("<b>Name:</b> ").append(shortcut.name).append("<br/>");
+            sb.append("<b>Container:</b> ").append(shortcut.container.getName()).append("<br/>");
+
+            String rawWine = shortcut.getExtra("wineVersion", shortcut.container.getWineVersion());
+            String displayWine = formatWineVersionForDisplay(rawWine);
+            if (displayWine.isEmpty()) displayWine = shortcut.container.getName();
+            sb.append("<b>Wine:</b> ").append(displayWine).append("<br/>");
+
+            String gv = shortcut.getGameVersion();
+            if (gv != null && !gv.isEmpty()) {
+                sb.append("<b>Game Version:</b> ").append(gv).append("<br/>");
+            }
+
+            com.winlator.cmod.win32.PEParser.FileVersionInfo fi = shortcut.getFileVersionInfo();
+            if (fi != null) {
+                if (fi.ProductName != null && !fi.ProductName.isEmpty()) {
+                    sb.append("<b>Product:</b> ").append(fi.ProductName).append("<br/>");
+                }
+                if (fi.CompanyName != null && !fi.CompanyName.isEmpty()) {
+                    sb.append("<b>Company:</b> ").append(fi.CompanyName).append("<br/>");
+                }
+                if (fi.FileDescription != null && !fi.FileDescription.isEmpty()) {
+                    sb.append("<b>Description:</b> ").append(fi.FileDescription).append("<br/>");
+                }
+                if (fi.LegalCopyright != null && !fi.LegalCopyright.isEmpty()) {
+                    sb.append("<b>Copyright:</b> ").append(fi.LegalCopyright).append("<br/>");
+                }
+            }
+
+            sb.append("<b>Path:</b> ").append(shortcut.path).append("<br/>");
+            sb.append("<b>File:</b> ").append(shortcut.file != null ? shortcut.file.getPath() : "");
+
+            if (tvDetails != null) {
+                tvDetails.setText(android.text.Html.fromHtml(sb.toString(), android.text.Html.FROM_HTML_MODE_LEGACY));
+            }
+
+            if (btnReset != null) {
+                btnReset.setOnClickListener(v -> {
+                    playtimePrefs.edit().remove(playtimeKey).remove(playCountKey).apply();
+                    if (tvPlayCount != null) tvPlayCount.setText("Number of times played: 0");
+                    if (tvPlaytime != null) tvPlaytime.setText("Playtime: 0d 00h 00m 00s");
+                    Toast.makeText(context, "Properties reset", Toast.LENGTH_SHORT).show();
+                });
+            }
+
             dialog.show();
+        }
+
+        public static String formatWineVersionForDisplay(String raw) {
+            if (raw == null || raw.trim().isEmpty()) return "";
+            String s = raw.trim();
+
+            // Strip common archive and package extensions
+            for (String ext : new String[]{".tzst", ".tar.xz", ".tar.zst", ".tar.gz", ".wcp", ".zip"}) {
+                if (s.toLowerCase().endsWith(ext)) {
+                    s = s.substring(0, s.length() - ext.length()).trim();
+                }
+            }
+
+            // Strip trailing versionCode (e.g. "-1" in "Proton-11.0-1-arm64ec-1")
+            if (s.matches(".*-[0-9]+$")) {
+                int lastDash = s.lastIndexOf('-');
+                if (lastDash > 0) {
+                    String beforeDash = s.substring(0, lastDash);
+                    String lowerBefore = beforeDash.toLowerCase();
+                    if (lowerBefore.contains("arm64") || lowerBefore.contains("x86") || lowerBefore.contains("wine") || lowerBefore.contains("proton")) {
+                        s = beforeDash;
+                    }
+                }
+            }
+
+            // Detect architecture
+            String arch = "";
+            String lower = s.toLowerCase();
+            if (lower.contains("arm64ec")) {
+                arch = " arm64ec";
+            } else if (lower.contains("x86_64") || lower.contains("x86-64") || lower.contains("x64")) {
+                arch = " x86_64";
+            } else if (lower.contains("x86") || lower.contains("i386")) {
+                arch = " x86";
+            }
+
+            // Strip architecture tokens from core version string
+            String core = s;
+            core = core.replaceAll("(?i)[-_\\s]+arm64ec", "");
+            core = core.replaceAll("(?i)[-_\\s]+x86_64", "");
+            core = core.replaceAll("(?i)[-_\\s]+x86-64", "");
+            core = core.replaceAll("(?i)[-_\\s]+x86", "");
+            core = core.replaceAll("(?i)[-_\\s]+i386", "");
+
+            // Format prefix cleanly
+            if (core.toLowerCase().startsWith("ge-proton")) {
+                String rest = core.substring(9);
+                if (rest.startsWith("-") || rest.startsWith(" ")) rest = rest.substring(1).trim();
+                return "GE-Proton " + rest + arch;
+            } else if (core.toLowerCase().startsWith("proton")) {
+                String rest = core.substring(6);
+                if (rest.startsWith("-") || rest.startsWith(" ")) rest = rest.substring(1).trim();
+                return "Proton " + rest + arch;
+            } else if (core.toLowerCase().startsWith("wine")) {
+                String rest = core.substring(4);
+                if (rest.startsWith("-") || rest.startsWith(" ")) rest = rest.substring(1).trim();
+                return "Wine " + rest + arch;
+            }
+
+            return (core + arch).trim();
         }
 
         class ViewHolder extends RecyclerView.ViewHolder {
             private final ImageView coverArt;
             private final TextView title;
             private final TextView subtitle;
+            private final TextView version;
             private final ImageButton menuButton;
             private final View innerArea;
 
@@ -619,6 +1188,7 @@ public class ShortcutsFragment extends Fragment {
                 coverArt = view.findViewById(R.id.ImageView);
                 title = view.findViewById(R.id.TVTitle);
                 subtitle = view.findViewById(R.id.TVSubtitle);
+                version = view.findViewById(R.id.TVVersion);
                 menuButton = view.findViewById(R.id.BTMenu);
                 innerArea = view.findViewById(R.id.LLInnerArea);
             }

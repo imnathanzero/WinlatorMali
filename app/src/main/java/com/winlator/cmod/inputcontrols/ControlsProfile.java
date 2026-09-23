@@ -23,16 +23,73 @@ public class ControlsProfile implements Comparable<ControlsProfile> {
     private float cursorSpeed = 1.0f;
     private final ArrayList<ControlElement> elements = new ArrayList<>();
     private final ArrayList<ExternalController> controllers = new ArrayList<>();
+    private final ArrayList<RadialWheelConfig> wheels = new ArrayList<>();
     private final List<ControlElement> immutableElements = Collections.unmodifiableList(elements);
     private boolean elementsLoaded = false;
     private boolean controllersLoaded = false;
+    private boolean wheelsLoaded = false;
     private boolean virtualGamepad = false;
+    private ControlStylePreset stylePreset = ControlStylePreset.WINLATOR_MALI;
+    private float overlayOpacity = InputControlsView.DEFAULT_OVERLAY_OPACITY;
     private final Context context;
     private GamepadState gamepadState;
 
     public ControlsProfile(Context context, int id) {
         this.context = context;
         this.id = id;
+    }
+
+    public float getOverlayOpacity() {
+        return (Float.isNaN(overlayOpacity) || Float.isInfinite(overlayOpacity) || overlayOpacity < 0.05f) ? InputControlsView.DEFAULT_OVERLAY_OPACITY : overlayOpacity;
+    }
+
+    public void setOverlayOpacity(float overlayOpacity) {
+        this.overlayOpacity = Math.max(0.05f, Math.min(1.0f, overlayOpacity));
+    }
+
+    public ControlStylePreset getStylePreset() {
+        return stylePreset != null ? stylePreset : ControlStylePreset.WINLATOR_MALI;
+    }
+
+    public void setStylePreset(ControlStylePreset stylePreset) {
+        this.stylePreset = (stylePreset != null) ? stylePreset : ControlStylePreset.WINLATOR_MALI;
+    }
+
+    public void applyStylePreset(ControlStylePreset preset, InputControlsView inputControlsView) {
+        this.stylePreset = (preset != null) ? preset : ControlStylePreset.WINLATOR_MALI;
+        if (!elementsLoaded && inputControlsView != null) loadElements(inputControlsView);
+        for (ControlElement el : elements) {
+            ControlElement.Type t = el.getType();
+            if (t == ControlElement.Type.BUTTON || t == ControlElement.Type.EXPANDABLE_BUTTON || t == ControlElement.Type.BUTTON_GRID) {
+                String text = el.getDisplayText();
+                boolean isTrigger = text.matches("(?i)L[12]|R[12]|LT|RT|LB|RB");
+                boolean isStartSelect = text.equalsIgnoreCase("START") || text.equalsIgnoreCase("SELECT") || text.equalsIgnoreCase("MENU") || text.equalsIgnoreCase("BACK");
+
+                switch (this.stylePreset) {
+                    case CYBERPUNK:
+                        if (isTrigger || isStartSelect) el.setShape(ControlElement.Shape.OCTAGON);
+                        else el.setShape(ControlElement.Shape.HEXAGON);
+                        break;
+                    case RETRO_ARCADE:
+                        if (isTrigger || isStartSelect) el.setShape(ControlElement.Shape.RECT);
+                        else el.setShape(ControlElement.Shape.SQUARE);
+                        break;
+                    case STEALTH:
+                        if (isTrigger || isStartSelect) el.setShape(ControlElement.Shape.CAPSULE);
+                        else el.setShape(ControlElement.Shape.OVAL);
+                        break;
+                    case XBOX:
+                    case PLAYSTATION:
+                    case WINLATOR_MALI:
+                    default:
+                        if (isTrigger || isStartSelect) el.setShape(ControlElement.Shape.CAPSULE);
+                        else el.setShape(ControlElement.Shape.CIRCLE);
+                        break;
+                }
+            }
+        }
+        save();
+        if (inputControlsView != null) inputControlsView.invalidate();
     }
 
     public String getName() {
@@ -44,11 +101,11 @@ public class ControlsProfile implements Comparable<ControlsProfile> {
     }
 
     public float getCursorSpeed() {
-        return cursorSpeed;
+        return (Float.isNaN(cursorSpeed) || Float.isInfinite(cursorSpeed) || cursorSpeed <= 0) ? 1.0f : cursorSpeed;
     }
 
     public void setCursorSpeed(float cursorSpeed) {
-        this.cursorSpeed = cursorSpeed;
+        this.cursorSpeed = (Float.isNaN(cursorSpeed) || Float.isInfinite(cursorSpeed) || cursorSpeed <= 0) ? 1.0f : cursorSpeed;
     }
 
     public boolean isVirtualGamepad() {
@@ -110,6 +167,19 @@ public class ControlsProfile implements Comparable<ControlsProfile> {
         return Integer.compare(id, o.id);
     }
 
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        ControlsProfile that = (ControlsProfile) o;
+        return id == that.id;
+    }
+
+    @Override
+    public int hashCode() {
+        return Integer.hashCode(id);
+    }
+
     public boolean isElementsLoaded() {
         return elementsLoaded;
     }
@@ -122,6 +192,8 @@ public class ControlsProfile implements Comparable<ControlsProfile> {
             data.put("id", id);
             data.put("name", name);
             data.put("cursorSpeed", Float.valueOf(cursorSpeed));
+            data.put("overlayOpacity", Float.valueOf(getOverlayOpacity()));
+            data.put("stylePreset", getStylePreset().name());
 
             JSONArray elementsJSONArray = new JSONArray();
             if (!elementsLoaded && file.isFile()) {
@@ -144,9 +216,64 @@ public class ControlsProfile implements Comparable<ControlsProfile> {
             }
             if (controllersJSONArray.length() > 0) data.put("controllers", controllersJSONArray);
 
+            JSONArray wheelsJSONArray = new JSONArray();
+            if (!wheelsLoaded && file.isFile()) {
+                JSONObject profileJSONObject = new JSONObject(FileUtils.readString(file));
+                if (profileJSONObject.has("wheels")) wheelsJSONArray = profileJSONObject.getJSONArray("wheels");
+            }
+            else {
+                for (RadialWheelConfig wheel : wheels) {
+                    JSONObject wheelJSONObject = wheel.toJSONObject();
+                    if (wheelJSONObject != null) wheelsJSONArray.put(wheelJSONObject);
+                }
+            }
+            if (wheelsJSONArray.length() > 0) data.put("wheels", wheelsJSONArray);
+
+            // Embed custom icons for 100% portable sharing (Bannerlator .icpx + Winlator .icp formats)
+            CustomIconManager iconManager = CustomIconManager.getInstance(context);
+            JSONArray embeddedIcons = new JSONArray();
+            JSONArray customIconsArr = new JSONArray();
+            java.util.Set<Integer> customIds = new java.util.HashSet<>();
+            for (ControlElement element : elements) {
+                int iId = element.getIconId();
+                if (iId > CustomIconManager.BUILTIN_ICON_MAX) customIds.add(iId);
+            }
+            for (RadialWheelConfig wheel : wheels) {
+                for (RadialWheelSlice slice : wheel.slices) {
+                    if (slice.iconId > CustomIconManager.BUILTIN_ICON_MAX) customIds.add(slice.iconId);
+                }
+            }
+            for (int cid : customIds) {
+                String b64 = iconManager.encodeIconBase64(cid);
+                if (b64 != null) {
+                    embeddedIcons.put(b64);
+                    JSONObject cObj = new JSONObject();
+                    cObj.put("id", cid);
+                    cObj.put("png", b64);
+                    customIconsArr.put(cObj);
+                }
+            }
+            if (customIconsArr.length() > 0) data.put("customIcons", customIconsArr);
+            if (embeddedIcons.length() > 0) data.put("embeddedIcons", embeddedIcons);
+
             FileUtils.writeString(file, data.toString());
         }
         catch (JSONException e) {}
+    }
+
+    public ArrayList<RadialWheelConfig> getWheels() {
+        if (!wheelsLoaded) loadWheels();
+        return wheels;
+    }
+
+    public void addWheel(RadialWheelConfig wheel) {
+        wheels.add(wheel);
+        wheelsLoaded = true;
+    }
+
+    public void removeWheel(RadialWheelConfig wheel) {
+        if (!wheelsLoaded) loadWheels();
+        wheels.remove(wheel);
     }
 
     public static File getProfileFile(Context context, int id) {
@@ -215,38 +342,136 @@ public class ControlsProfile implements Comparable<ControlsProfile> {
         File file = getProfileFile(context, id);
         if (!file.isFile()) return;
 
+        File origBackup = new File(InputControlsManager.getProfilesDir(context), "controls-" + id + ".orig");
+        if (!origBackup.exists()) {
+            FileUtils.copy(file, origBackup);
+        }
+
         try {
             JSONObject profileJSONObject = new JSONObject(FileUtils.readString(file));
+            this.stylePreset = ControlStylePreset.parse(profileJSONObject.optString("stylePreset", "WINLATOR_MALI"));
+            this.overlayOpacity = (float) profileJSONObject.optDouble("overlayOpacity", (double) InputControlsView.DEFAULT_OVERLAY_OPACITY);
+            if (profileJSONObject.has("customIcons")) {
+                CustomIconManager iconManager = CustomIconManager.getInstance(context);
+                JSONArray customIcons = profileJSONObject.getJSONArray("customIcons");
+                for (int ci = 0; ci < customIcons.length(); ci++) {
+                    JSONObject obj = customIcons.optJSONObject(ci);
+                    if (obj != null) {
+                        int sourceId = obj.optInt("id", 0);
+                        String pngBase64 = obj.optString("png", null);
+                        if (pngBase64 != null && !pngBase64.isEmpty()) {
+                            iconManager.decodeAndSaveBase64(pngBase64, sourceId);
+                        }
+                    }
+                }
+            }
+            if (profileJSONObject.has("embeddedIcons")) {
+                CustomIconManager iconManager = CustomIconManager.getInstance(context);
+                JSONArray embeddedIcons = profileJSONObject.getJSONArray("embeddedIcons");
+                for (int ei = 0; ei < embeddedIcons.length(); ei++) {
+                    iconManager.decodeAndSaveBase64(embeddedIcons.getString(ei));
+                }
+            }
             JSONArray elementsJSONArray = profileJSONObject.getJSONArray("elements");
             for (int i = 0; i < elementsJSONArray.length(); i++) {
                 JSONObject elementJSONObject = elementsJSONArray.getJSONObject(i);
                 ControlElement element = new ControlElement(inputControlsView);
-                element.setType(ControlElement.Type.valueOf(elementJSONObject.getString("type")));
-                element.setShape(ControlElement.Shape.valueOf(elementJSONObject.getString("shape")));
-                element.setToggleSwitch(elementJSONObject.getBoolean("toggleSwitch"));
-                element.setX((int)(elementJSONObject.getDouble("x") * inputControlsView.getMaxWidth()));
-                element.setY((int)(elementJSONObject.getDouble("y") * inputControlsView.getMaxHeight()));
-                element.setScale((float)elementJSONObject.getDouble("scale"));
-                element.setText(elementJSONObject.getString("text"));
-                element.setIconId(elementJSONObject.getInt("iconId"));
-                if (elementJSONObject.has("range")) element.setRange(ControlElement.Range.valueOf(elementJSONObject.getString("range")));
-                if (elementJSONObject.has("orientation")) element.setOrientation((byte)elementJSONObject.getInt("orientation"));
+                element.setType(ControlElement.Type.parse(elementJSONObject.optString("type", "BUTTON")));
+                element.setShape(ControlElement.Shape.parse(elementJSONObject.optString("shape", "CIRCLE")));
+                element.setToggleSwitch(elementJSONObject.optBoolean("toggleSwitch", false));
+                element.setX((int)(elementJSONObject.optDouble("x", 0.5) * inputControlsView.getMaxWidth()));
+                element.setY((int)(elementJSONObject.optDouble("y", 0.5) * inputControlsView.getMaxHeight()));
+                element.setScale((float)elementJSONObject.optDouble("scale", 1.0));
+                element.setText(elementJSONObject.optString("text", ""));
+                int rawIconId = elementJSONObject.optInt("iconId", 0);
+                if (rawIconId < 0 && rawIconId >= Byte.MIN_VALUE) rawIconId = rawIconId & 0xFF;
+                element.setIconId(rawIconId);
+                element.setCustomIconAsButton(elementJSONObject.optBoolean("customIconAsButton", false));
+                element.setWidthScale((float)elementJSONObject.optDouble("widthScale", 1.0));
+                element.setHeightScale((float)elementJSONObject.optDouble("heightScale", 1.0));
+                element.setTouchPadding(elementJSONObject.optInt("touchPadding", 0));
+                if (elementJSONObject.has("range")) element.setRange(ControlElement.Range.parse(elementJSONObject.optString("range", "FROM_A_TO_Z")));
+                if (elementJSONObject.has("orientation")) element.setOrientation((byte)elementJSONObject.optInt("orientation", 0));
 
                 boolean hasGamepadBinding = true;
-                JSONArray bindingsJSONArray = elementJSONObject.getJSONArray("bindings");
-                for (int j = 0; j < bindingsJSONArray.length(); j++) {
-                    Binding binding = Binding.fromString(bindingsJSONArray.getString(j));
-                    element.setBindingAt(j, Binding.fromString(bindingsJSONArray.getString(j)));
-                    if (!binding.isGamepad()) hasGamepadBinding = false;
+                JSONArray bindingsJSONArray = elementJSONObject.optJSONArray("bindings");
+                if (bindingsJSONArray != null) {
+                    for (int j = 0; j < bindingsJSONArray.length(); j++) {
+                        Binding binding = Binding.fromString(bindingsJSONArray.getString(j));
+                        element.setBindingAt(j, binding);
+                        if (!binding.isGamepad()) hasGamepadBinding = false;
+                    }
                 }
 
                 if (!virtualGamepad && hasGamepadBinding) virtualGamepad = true;
                 elements.add(element);
             }
             elementsLoaded = true;
+            loadWheels();
         }
         catch (JSONException e) {
             e.printStackTrace();
         }
+    }
+
+    public ArrayList<RadialWheelConfig> loadWheels() {
+        wheels.clear();
+        wheelsLoaded = true;
+
+        File file = getProfileFile(context, id);
+        if (!file.isFile()) return wheels;
+
+        try {
+            JSONObject profileJSONObject = new JSONObject(FileUtils.readString(file));
+            if (!profileJSONObject.has("wheels")) return wheels;
+            JSONArray wheelsJSONArray = profileJSONObject.getJSONArray("wheels");
+            for (int i = 0; i < wheelsJSONArray.length(); i++) {
+                JSONObject wheelJSONObject = wheelsJSONArray.getJSONObject(i);
+                RadialWheelConfig wheel = RadialWheelConfig.fromJSON(wheelJSONObject);
+                if (wheel != null) wheels.add(wheel);
+            }
+        }
+        catch (JSONException e) {
+            e.printStackTrace();
+        }
+        return wheels;
+    }
+
+    public boolean resetToOriginal(InputControlsView inputControlsView) {
+        if (isTemplate()) {
+            return resetToDefaultTemplate(inputControlsView);
+        }
+        File origBackup = new File(InputControlsManager.getProfilesDir(context), "controls-" + id + ".orig");
+        if (origBackup.isFile()) {
+            File targetFile = getProfileFile(context, id);
+            FileUtils.copy(origBackup, targetFile);
+            loadElements(inputControlsView);
+            return true;
+        }
+        return false;
+    }
+
+    public boolean resetToDefaultTemplate(InputControlsView inputControlsView) {
+        if (!isTemplate()) return false;
+        try {
+            android.content.res.AssetManager assetManager = context.getAssets();
+            String[] assetFiles = assetManager.list("inputcontrols/profiles");
+            if (assetFiles != null) {
+                for (String assetFile : assetFiles) {
+                    String assetPath = "inputcontrols/profiles/" + assetFile;
+                    ControlsProfile originProfile = InputControlsManager.loadProfile(context, assetManager.open(assetPath));
+                    if (originProfile != null && originProfile.getName().equalsIgnoreCase(this.getName())) {
+                        File targetFile = getProfileFile(context, id);
+                        FileUtils.copy(context, assetPath, targetFile);
+                        loadElements(inputControlsView);
+                        return true;
+                    }
+                }
+            }
+        }
+        catch (Exception e) {
+            e.printStackTrace();
+        }
+        return false;
     }
 }

@@ -18,11 +18,16 @@
         <item>1600x900 (16:9)</item>
         <item>1920x1080 (16:9)</item>
     </string-array>
+    <string-array name="display_driver_entries">
+        <item>OpenGL</item>
+        <item>DisplayX</item>
+    </string-array>
+    <string-array name="surface_format_entries">
+        <item>rgba8</item>
+        <item>bgra8</item>
+    </string-array>
     <string-array name="graphics_driver_entries">
         <item>Wrapper</item>
-        <item>Wrapper-leegao</item>
-        <item>Wrapper-v2</item>
-        <item>Wrapper-gamenative</item>
     </string-array>
     <string-array name="wrapper_graphics_driver_version_entries">
         <item>System</item>
@@ -30,8 +35,9 @@
         <item>turnip25.1.0</item>
     </string-array>
     <string-array name="audio_driver_entries">
-        <item>PulseAudio</item>
         <item>ALSA</item>
+        <item>PulseAudio</item>
+        <item>PulseAudio-GN</item>
     </string-array>
     <string-array name="binding_type_entries">
         <item>Keyboard</item>
@@ -175,6 +181,26 @@
         <item>Normal (Load all services)</item>
         <item>Essential (Load only essential services)</item>
         <item>Aggressive (Stop services on startup)</item>
+    </string-array>
+
+    <string-array name="ram_booster_profile_entries">
+        <item>Smart Auto</item>
+        <item>Low</item>
+        <item>Medium</item>
+        <item>High</item>
+        <item>Aggressive</item>
+        <item>Max</item>
+        <item>Manual</item>
+    </string-array>
+
+    <string-array name="ram_booster_profile_values">
+        <item>smart</item>
+        <item>low</item>
+        <item>medium</item>
+        <item>high</item>
+        <item>aggressive</item>
+        <item>max</item>
+        <item>manual</item>
     </string-array>
     <string-array name="vkd3d_version_entries">
         <item>None</item>
@@ -340,11 +366,6 @@
         <item>proton-9.0-arm64ec</item>
         <item>proton-9.0-x86_64</item>
     </string-array>
-    <string-array name="vkbasalt_sharpness_entries">
-        <item>None</item>
-        <item>CAS</item>
-        <item>DLS</item>
-    </string-array>
     <string-array name="num_controllers_entries">
         <item>1</item>
         <item>2</item>
@@ -355,14 +376,23 @@
         <item>Unified Control System</item>
     </string-array>
     <string-array name="lsfg_quality_entries">
-        <item>Performance</item>
-        <item>Balanced</item>
-        <item>High Quality</item>
+        <item>Fast (180p - Recommended)</item>
+        <item>Balance (216p)</item>
+        <item>Quality (270p)</item>
     </string-array>
     <string-array name="lsfg_multiplier_entries">
         <item>2x</item>
         <item>3x</item>
         <item>4x</item>
+    </string-array>
+    <string-array name="apex_render_scale_entries">
+        <item>Native (100%)</item>
+        <item>Ultra Quality (85%)</item>
+        <item>Quality (75%)</item>
+        <item>Balanced (67%)</item>
+        <item>Performance (50%)</item>
+        <item>Ultra Performance (35%)</item>
+        <item>Extreme Performance (25%)</item>
     </string-array>
     <string-array name="lsfg_target_fps_entries">
         <item>Unlimited</item>
@@ -372,10 +402,11 @@
         <item>60 FPS</item>
         <item>90 FPS</item>
         <item>120 FPS</item>
+        <item>Custom...</item>
     </string-array>
     <string-array name="sharpening_mode_entries">
-        <item>CAS (Pure)</item>
-        <item>DLS (CAS + Saturation)</item>
+        <item>AMD RCAS (Pure Sharpening)</item>
+        <item>AMD RCAS + Vibrance (Color Pop)</item>
     </string-array>
     <string-array name="fps_limit_entries">
         <item>Unlimited</item>
@@ -384,5 +415,6 @@
         <item>60</item>
         <item>90</item>
         <item>120</item>
+        <item>Custom...</item>
     </string-array>
 </resources>

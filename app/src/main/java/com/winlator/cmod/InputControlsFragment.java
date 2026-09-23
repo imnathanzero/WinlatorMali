@@ -11,6 +11,7 @@ import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
@@ -101,19 +102,27 @@ public class InputControlsFragment extends Fragment {
 
     @Override
     public void onActivityResult(int requestCode, int resultCode, @Nullable Intent data) {
-        if (requestCode == MainActivity.OPEN_FILE_REQUEST_CODE && resultCode == Activity.RESULT_OK) {
+        if (requestCode == MainActivity.OPEN_FILE_REQUEST_CODE && resultCode == Activity.RESULT_OK && data != null) {
             try {
-                String content = FileUtils.readString(getContext(), data.getData());
-                JSONObject profileJSONObject = null;
-                
-                // Try parsing as JSON (standard Winlator profile)
-                try {
-                    profileJSONObject = new JSONObject(content);
-                } catch (JSONException e) {}
+                Uri uri = data.getData();
+                String filename = FileUtils.getUriFileName(getContext(), uri);
+                String fallbackName = (filename != null && !filename.isEmpty()) ? FileUtils.getBasename(filename) : "Imported Profile";
 
-                if (profileJSONObject != null) {
-                    ControlsProfile importedProfile = manager.importProfile(profileJSONObject);
+                com.winlator.cmod.inputcontrols.CustomIconManager.ImportResult res =
+                        com.winlator.cmod.inputcontrols.CustomIconManager.getInstance(getContext()).importUniversalPackage(uri, fallbackName);
+
+                if (res.profileJSON != null) {
+                    ControlsProfile importedProfile = manager.importProfile(res.profileJSON);
                     if (importProfileCallback != null) importProfileCallback.call(importedProfile);
+                    String msg = "Imported profile '" + importedProfile.getName() + "'";
+                    if (res.importedIconsCount > 0) {
+                        msg += " with " + res.importedIconsCount + " custom icons!";
+                    } else {
+                        msg += " successfully!";
+                    }
+                    AppUtils.showToast(getContext(), msg);
+                } else if (res.importedIconsCount > 0) {
+                    AppUtils.showToast(getContext(), "Imported " + res.importedIconsCount + " custom icons from icon pack!");
                 } else {
                     AppUtils.showToast(getContext(), R.string.unable_to_import_profile);
                 }
@@ -131,11 +140,12 @@ public class InputControlsFragment extends Fragment {
         View view = inflater.inflate(R.layout.input_controls_fragment, container, false);
         final Context context = getContext();
 
+        ThemeManager.applyThemeToView(view, context);
+
         currentProfile = selectedProfileId > 0 ? manager.getProfile(selectedProfileId) : null;
 
         final Spinner sProfile = view.findViewById(R.id.SProfile);
-
-        sProfile.setPopupBackgroundResource(isDarkMode ? R.drawable.content_dialog_background_dark : R.drawable.content_dialog_background);
+        sProfile.setPopupBackgroundResource(R.drawable.content_dialog_background_dark);
 
         loadProfileSpinner(sProfile);
 
@@ -248,6 +258,19 @@ public class InputControlsFragment extends Fragment {
             }
         });
 
+        view.findViewById(R.id.BTRadialWheelSettings).setOnClickListener((v) -> {
+            if (currentProfile != null) {
+                RadialWheelsDialog.show(context, currentProfile, null);
+            } else {
+                AppUtils.showToast(context, R.string.no_profile_selected);
+            }
+        });
+
+        View btTestVibration = view.findViewById(R.id.BTTestVibration);
+        if (btTestVibration != null) {
+            btTestVibration.setOnClickListener((v) -> com.winlator.cmod.contentdialog.VibrationTestDialog.show(context));
+        }
+
         return view;
     }
 
@@ -317,7 +340,10 @@ public class InputControlsFragment extends Fragment {
         int selectedPosition = 0;
         for (int i = 0; i < profiles.size(); i++) {
             ControlsProfile profile = profiles.get(i);
-            if (profile == currentProfile) selectedPosition = i + 1;
+            if (currentProfile != null && profile.id == currentProfile.id) {
+                selectedPosition = i + 1;
+                currentProfile = profile;
+            }
             values.add(profile.getName());
         }
 
@@ -352,13 +378,14 @@ public class InputControlsFragment extends Fragment {
             String bindingsText = context.getString(R.string.bindings);
             for (final ExternalController controller : controllers) {
                 View itemView = inflater.inflate(R.layout.external_controller_list_item, container, false);
+                ThemeManager.applyThemeToView(itemView, context);
                 ((TextView)itemView.findViewById(R.id.TVTitle)).setText(controller.getName());
 
                 int controllerBindingCount = controller.getControllerBindingCount();
                 ((TextView)itemView.findViewById(R.id.TVSubtitle)).setText(controllerBindingCount+" "+bindingsText);
 
                 ImageView imageView = itemView.findViewById(R.id.ImageView);
-                int tintColor = controller.isConnected() ? ContextCompat.getColor(context, R.color.colorAccent) : 0xffe57373;
+                int tintColor = controller.isConnected() ? ThemeManager.getAccentColor(context) : 0xffe57373;
                 ImageViewCompat.setImageTintList(imageView, ColorStateList.valueOf(tintColor));
 
                 if (controllerBindingCount > 0) {

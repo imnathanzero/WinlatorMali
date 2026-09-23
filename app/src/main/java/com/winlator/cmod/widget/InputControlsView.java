@@ -23,12 +23,15 @@ import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.PointerIcon;
 import android.view.View;
+import android.view.ViewConfiguration;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
 
 import androidx.preference.PreferenceManager;
 
 import com.winlator.cmod.R;
+import com.winlator.cmod.RadialWheelManager;
+import com.winlator.cmod.core.UnitUtils;
 import com.winlator.cmod.inputcontrols.Binding;
 import com.winlator.cmod.inputcontrols.ControlElement;
 import com.winlator.cmod.inputcontrols.ControlsProfile;
@@ -52,6 +55,7 @@ public class InputControlsView extends View {
     public static final float DEFAULT_OVERLAY_OPACITY = 0.4f;
     public static final byte MOUSE_WHEEL_DELTA = 120;
     private boolean editMode = false;
+    private boolean drawOpaqueBackground = true;
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Path path = new Path();
     private final ColorFilter colorFilter = new PorterDuffColorFilter(0xffffffff, PorterDuff.Mode.SRC_IN);
@@ -61,12 +65,17 @@ public class InputControlsView extends View {
     private int snappingSize;
     private float offsetX;
     private float offsetY;
+    private float initialTouchX;
+    private float initialTouchY;
+    private int elementStartX;
+    private int elementStartY;
+    private boolean isDraggingElement = false;
+    private int touchSlop;
     private ControlElement selectedElement;
     private ControlsProfile profile;
     private float overlayOpacity = DEFAULT_OVERLAY_OPACITY;
     private TouchpadView touchpadView;
     private XServer xServer;
-    private final Bitmap[] icons = new Bitmap[17];
     private Timer mouseMoveTimer;
     private final PointF mouseMoveOffset = new PointF();
     private final Map<Binding, Float> keyPressures = new HashMap<>();
@@ -77,6 +86,23 @@ public class InputControlsView extends View {
     private SharedPreferences preferences;
     private ControlElement stickElement;
     private boolean focusOnStick = false;
+    private RadialWheelManager radialWheelManager;
+    private boolean l2TriggerHeld = false;
+    private boolean r2TriggerHeld = false;
+
+    // Cached vibrator instance and effect to avoid per-tap getSystemService() Binder IPC
+    // and repeated VibrationEffect allocation on the UI thread hot path.
+    private Vibrator cachedVibrator;
+    private VibrationEffect cachedHapticEffect;
+    private boolean cachedVibratorInitialized = false;
+
+    public RadialWheelManager getRadialWheelManager() {
+        return radialWheelManager;
+    }
+
+    public void setRadialWheelManager(RadialWheelManager radialWheelManager) {
+        this.radialWheelManager = radialWheelManager;
+    }
 
     public boolean isFocusedOnStick() {
         return focusOnStick;
@@ -98,6 +124,8 @@ public class InputControlsView extends View {
         setPointerIcon(PointerIcon.load(getResources(), R.drawable.hidden_pointer_arrow));
         setLayoutParams(new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         preferences = PreferenceManager.getDefaultSharedPreferences(this.getContext());
+        touchSlop = ViewConfiguration.get(context).getScaledTouchSlop();
+        if (touchSlop <= 0) touchSlop = (int) UnitUtils.dpToPx(8);
     }
 
     @SuppressLint("ResourceType")
@@ -113,10 +141,22 @@ public class InputControlsView extends View {
         setPointerIcon(PointerIcon.load(getResources(), R.drawable.hidden_pointer_arrow));
         setLayoutParams(new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         preferences = PreferenceManager.getDefaultSharedPreferences(this.getContext());
+        touchSlop = ViewConfiguration.get(context).getScaledTouchSlop();
+        if (touchSlop <= 0) touchSlop = (int) UnitUtils.dpToPx(8);
+        // Cache the entire drawn overlay as a GPU texture. When no invalidate() is called
+        // (e.g. while a static button is held down), Android simply re-composites the
+        // cached texture in <0.1ms instead of re-drawing all vector elements.
+        setLayerType(View.LAYER_TYPE_HARDWARE, null);
+        // Cache vibrator service once to avoid per-tap Binder IPC overhead
+        initCachedVibrator(context);
     }
 
     public void setEditMode(boolean editMode) {
         this.editMode = editMode;
+    }
+
+    public boolean isEditMode() {
+        return editMode;
     }
 
     public void setOverlayOpacity(float overlayOpacity) {
@@ -164,6 +204,11 @@ public class InputControlsView extends View {
                 element.draw(canvas);
             }
         }
+
+        if (radialWheelManager != null && radialWheelManager.isOpen()) {
+            radialWheelManager.draw(canvas, width, height, overlayOpacity);
+        }
+
         super.onDraw(canvas);
     }
 
@@ -192,28 +237,37 @@ public class InputControlsView extends View {
         }
     }
 
-    public ControlElement getStickElement() {
-        return stickElement;
+    public boolean isDrawOpaqueBackground() {
+        return drawOpaqueBackground;
+    }
+
+    public void setDrawOpaqueBackground(boolean drawOpaqueBackground) {
+        this.drawOpaqueBackground = drawOpaqueBackground;
+        invalidate();
     }
 
     private void drawGrid(Canvas canvas) {
-        paint.setStyle(Paint.Style.FILL);
-        paint.setStrokeWidth(snappingSize * 0.0625f);
-        paint.setColor(0xff000000);
-        canvas.drawColor(Color.BLACK);
-        paint.setAntiAlias(false);
-        paint.setColor(0xff303030);
+        if (drawOpaqueBackground) {
+            paint.setStyle(Paint.Style.FILL);
+            paint.setStrokeWidth(snappingSize * 0.0625f);
+            paint.setColor(0xff000000);
+            canvas.drawColor(Color.BLACK);
+            paint.setAntiAlias(false);
+            paint.setColor(0xff303030);
+            int width = getMaxWidth();
+            int height = getMaxHeight();
+            for (int i = 0; i < width; i += snappingSize) canvas.drawLine(i, 0, i, height, paint);
+            for (int i = 0; i < height; i += snappingSize) canvas.drawLine(0, i, width, i, paint);
 
-        int width = getMaxWidth();
-        int height = getMaxHeight();
-        for (int i = 0; i < width; i += snappingSize) canvas.drawLine(i, 0, i, height, paint);
-        for (int i = 0; i < height; i += snappingSize) canvas.drawLine(0, i, width, i, paint);
-
-        float cx = Mathf.roundTo(width * 0.5f, snappingSize);
-        float cy = Mathf.roundTo(height * 0.5f, snappingSize);
-        paint.setColor(0xff424242);
-        for (int i = 0; i < height; i += snappingSize * 2) canvas.drawLine(cx, i, cx, i + snappingSize, paint);
-        for (int i = 0; i < width; i += snappingSize * 2) canvas.drawLine(i, cy, i + snappingSize, cy, paint);
+            float cx = Mathf.roundTo(width * 0.5f, snappingSize);
+            float cy = Mathf.roundTo(height * 0.5f, snappingSize);
+            paint.setColor(0xff424242);
+            for (int i = 0; i < height; i += snappingSize * 2) canvas.drawLine(cx, i, cx, i + snappingSize, paint);
+            for (int i = 0; i < width; i += snappingSize * 2) canvas.drawLine(i, cy, i + snappingSize, cy, paint);
+        } else {
+            // Live container view overlay: Smooth translucent dark glass tint with ZERO grid lines
+            canvas.drawColor(0x44000000);
+        }
         paint.setAntiAlias(true);
     }
 
@@ -230,6 +284,7 @@ public class InputControlsView extends View {
     public synchronized boolean addElement() {
         if (editMode && profile != null) {
             ControlElement element = new ControlElement(this);
+            element.setCustomIconAsButton(false);
             element.setX(cursor.x);
             element.setY(cursor.y);
             profile.addElement(element);
@@ -276,9 +331,18 @@ public class InputControlsView extends View {
     public synchronized void setProfile(ControlsProfile profile) {
         if (profile != null) {
             this.profile = profile;
+            this.overlayOpacity = profile.getOverlayOpacity();
             deselectAllElements();
+            if (radialWheelManager != null) {
+                radialWheelManager.updateConfigs(profile.getWheels());
+            }
         }
-        else this.profile = null;
+        else {
+            this.profile = null;
+            if (radialWheelManager != null) {
+                radialWheelManager.dismissAll();
+            }
+        }
     }
 
     public boolean isShowTouchscreenControls() {
@@ -464,15 +528,72 @@ public class InputControlsView extends View {
                 }
             }
         }
+        if (radialWheelManager != null && radialWheelManager.isOpen()) {
+            radialWheelManager.onStickMoved(valX, valY);
+        }
     }
 
     private void processTriggerInput(ExternalController controller, float value, int keyCode, boolean sendUpdate) {
         ExternalControllerBinding binding = controller.getControllerBinding(keyCode);
-        if (binding != null) handleInputEvent(controller, binding.getBinding(), value > ControlElement.STICK_DEAD_ZONE, value, sendUpdate);
+        if (binding != null) {
+            Binding b = binding.getBinding();
+            if (radialWheelManager != null) {
+                if (value > 0.5f) {
+                    radialWheelManager.onBindingHeld(b, getWidth() / 2f, getHeight() / 2f);
+                } else if (value < 0.2f && radialWheelManager.isOpen()) {
+                    radialWheelManager.onBindingReleased(b);
+                }
+            }
+            handleInputEvent(controller, b, value > ControlElement.STICK_DEAD_ZONE, value, sendUpdate);
+        }
     }
 
     @Override
     public boolean onGenericMotionEvent(MotionEvent event) {
+        if (radialWheelManager != null) {
+            // Check triggers for wheel activation
+            float l2 = event.getAxisValue(MotionEvent.AXIS_LTRIGGER);
+            if (l2 == 0f) l2 = event.getAxisValue(MotionEvent.AXIS_BRAKE);
+            float r2 = event.getAxisValue(MotionEvent.AXIS_RTRIGGER);
+            if (r2 == 0f) r2 = event.getAxisValue(MotionEvent.AXIS_GAS);
+
+            if (l2 > 0.4f) {
+                if (!l2TriggerHeld) {
+                    l2TriggerHeld = true;
+                    radialWheelManager.onBindingHeld(Binding.GAMEPAD_BUTTON_L2, getWidth() / 2f, getHeight() / 2f);
+                }
+            } else if (l2 < 0.2f && l2TriggerHeld) {
+                l2TriggerHeld = false;
+                radialWheelManager.onBindingReleased(Binding.GAMEPAD_BUTTON_L2);
+            }
+
+            if (r2 > 0.4f) {
+                if (!r2TriggerHeld) {
+                    r2TriggerHeld = true;
+                    radialWheelManager.onBindingHeld(Binding.GAMEPAD_BUTTON_R2, getWidth() / 2f, getHeight() / 2f);
+                }
+            } else if (r2 < 0.2f && r2TriggerHeld) {
+                r2TriggerHeld = false;
+                radialWheelManager.onBindingReleased(Binding.GAMEPAD_BUTTON_R2);
+            }
+
+            // If wheel is open, thumbsticks navigate slices!
+            if (radialWheelManager.isOpen()) {
+                float rx = event.getAxisValue(MotionEvent.AXIS_Z);
+                float ry = event.getAxisValue(MotionEvent.AXIS_RZ);
+                if (Math.abs(rx) > 0.2f || Math.abs(ry) > 0.2f) {
+                    radialWheelManager.onStickMoved(rx, ry);
+                } else {
+                    float lx = event.getAxisValue(MotionEvent.AXIS_X);
+                    float ly = event.getAxisValue(MotionEvent.AXIS_Y);
+                    if (Math.abs(lx) > 0.2f || Math.abs(ly) > 0.2f) {
+                        radialWheelManager.onStickMoved(lx, ly);
+                    }
+                }
+                return true;
+            }
+        }
+
         if (!editMode && profile != null) {
             ExternalController controller = profile.getController(event.getDeviceId());
             if (controller != null && controller.updateStateFromMotionEvent(event)) {
@@ -486,50 +607,165 @@ public class InputControlsView extends View {
     @Override
     public boolean onTouchEvent(MotionEvent event) {
         resetTouchscreenTimeout();
+        if (!editMode && radialWheelManager != null && radialWheelManager.hasActiveWheel()) {
+            if (radialWheelManager.handleTouchEvent(event)) return true;
+        }
+
         if (editMode && readyToDraw) {
             float x = event.getX(), y = event.getY();
-            switch (event.getAction()) {
+            switch (event.getActionMasked()) {
                 case MotionEvent.ACTION_DOWN -> {
+                    initialTouchX = x;
+                    initialTouchY = y;
+                    isDraggingElement = false;
                     ControlElement element = intersectElement(x, y);
-                    moveCursor = element == null;
-                    if (element != null) { offsetX = x - element.getX(); offsetY = y - element.getY(); }
+                    moveCursor = (element == null);
+                    if (element != null) {
+                        elementStartX = element.getX();
+                        elementStartY = element.getY();
+                        offsetX = x - elementStartX;
+                        offsetY = y - elementStartY;
+                    }
                     selectElement(element);
                 }
-                case MotionEvent.ACTION_MOVE -> { if (selectedElement != null) { selectedElement.setX((int)Mathf.roundTo(x - offsetX, snappingSize)); selectedElement.setY((int)Mathf.roundTo(y - offsetY, snappingSize)); invalidate(); } }
-                case MotionEvent.ACTION_UP -> { if (selectedElement != null) profile.save(); if (moveCursor) cursor.set((int)Mathf.roundTo(x, snappingSize), (int)Mathf.roundTo(y, snappingSize)); invalidate(); }
+                case MotionEvent.ACTION_MOVE -> {
+                    if (selectedElement != null) {
+                        float dx = x - initialTouchX;
+                        float dy = y - initialTouchY;
+                        if (!isDraggingElement && Math.hypot(dx, dy) > touchSlop) {
+                            isDraggingElement = true;
+                        }
+                        if (isDraggingElement) {
+                            selectedElement.setX((int) Mathf.roundTo(elementStartX + dx, snappingSize));
+                            selectedElement.setY((int) Mathf.roundTo(elementStartY + dy, snappingSize));
+                            invalidate();
+                        }
+                    }
+                }
+                case MotionEvent.ACTION_UP -> {
+                    if (selectedElement != null && isDraggingElement) {
+                        if (profile != null) profile.save();
+                    }
+                    if (moveCursor && !isDraggingElement) {
+                        cursor.set((int) Mathf.roundTo(x, snappingSize), (int) Mathf.roundTo(y, snappingSize));
+                    }
+                    isDraggingElement = false;
+                    invalidate();
+                }
+                case MotionEvent.ACTION_CANCEL -> {
+                    if (isDraggingElement && selectedElement != null) {
+                        selectedElement.setX(elementStartX);
+                        selectedElement.setY(elementStartY);
+                    }
+                    isDraggingElement = false;
+                    invalidate();
+                }
             }
+            return true;
         }
-        if (!editMode && profile != null) {
+        if (!editMode) {
+            if (profile == null || !showTouchscreenControls) {
+                if (touchpadView != null) touchpadView.onTouchEvent(event);
+                return true;
+            }
+
             int actionIndex = event.getActionIndex(), pointerId = event.getPointerId(actionIndex), actionMasked = event.getActionMasked();
             boolean handled = false;
             switch (actionMasked) {
                 case MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
                     float x = event.getX(actionIndex), y = event.getY(actionIndex);
-                    touchpadView.setPointerButtonLeftEnabled(true);
                     for (ControlElement element : profile.getElements()) {
+                        boolean contains = element.containsPoint(x, y);
+                        if (contains && radialWheelManager != null && !radialWheelManager.getConfigs().isEmpty()) {
+                            for (int b = 0; b < element.getBindingCount(); b++) {
+                                Binding binding = element.getBindingAt(b);
+                                if (binding != null && binding != Binding.NONE && radialWheelManager.onBindingHeld(binding, x, y)) {
+                                    handled = true;
+                                    break;
+                                }
+                            }
+                            if (handled) break;
+                        }
                         if (element.handleTouchDown(pointerId, x, y)) {
                             handled = true;
                             if (preferences.getBoolean("touchscreen_haptics_enabled", true)) {
-                                Vibrator v = (Vibrator)getContext().getSystemService(Context.VIBRATOR_SERVICE);
-                                if (v != null && v.hasVibrator()) v.vibrate(VibrationEffect.createOneShot(50, VibrationEffect.DEFAULT_AMPLITUDE));
+                                if (cachedVibrator != null && cachedHapticEffect != null) cachedVibrator.vibrate(cachedHapticEffect);
+                            }
+                            if (touchpadView != null && element.getBindingAt(0) == Binding.MOUSE_LEFT_BUTTON) {
+                                touchpadView.setPointerButtonLeftEnabled(false);
                             }
                         }
-                        if (element.getBindingAt(0) == Binding.MOUSE_LEFT_BUTTON) touchpadView.setPointerButtonLeftEnabled(false);
                     }
-                    if (!handled) touchpadView.onTouchEvent(event);
+                    if (!handled && touchpadView != null) touchpadView.onTouchEvent(event);
                     invalidate();
                 }
                 case MotionEvent.ACTION_MOVE -> {
-                    for (byte i = 0; i < event.getPointerCount(); i++) {
-                        handled = false;
-                        for (ControlElement element : profile.getElements()) if (element.handleTouchMove(event.getPointerId(i), event.getX(i), event.getY(i))) handled = true;
-                        if (!handled) touchpadView.onTouchEvent(event);
+                    if (radialWheelManager != null && radialWheelManager.isOpen()) {
+                        radialWheelManager.handleTouchEvent(event);
+                        invalidate();
+                        return true;
                     }
-                    invalidate();
+                    boolean hasUnhandledPointer = false;
+                    boolean needsRedraw = false;
+                    for (byte i = 0; i < event.getPointerCount(); i++) {
+                        boolean elementHandled = false;
+                        for (ControlElement element : profile.getElements()) {
+                            if (element.handleTouchMove(event.getPointerId(i), event.getX(i), event.getY(i))) {
+                                elementHandled = true;
+                                // Only request canvas redraw if the element has visual changes
+                                // during move (stick knob, D-pad direction, range scroller).
+                                // Static buttons (A/B/X/Y, triggers, bumpers) don't change
+                                // appearance while held, so skip the expensive full-view redraw.
+                                if (element.isDynamicVisual()) {
+                                    needsRedraw = true;
+                                }
+                                break;
+                            }
+                        }
+                        if (!elementHandled) hasUnhandledPointer = true;
+                    }
+                    if (hasUnhandledPointer && touchpadView != null) {
+                        touchpadView.onTouchEvent(event);
+                    }
+                    if (needsRedraw) {
+                        invalidate();
+                    }
                 }
                 case MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP, MotionEvent.ACTION_CANCEL -> {
-                    for (ControlElement element : profile.getElements()) if (element.handleTouchUp(pointerId)) handled = true;
-                    if (!handled) touchpadView.onTouchEvent(event);
+                    if (radialWheelManager != null && radialWheelManager.isOpen()) {
+                        radialWheelManager.handleTouchEvent(event);
+                        invalidate();
+                        return true;
+                    }
+                    if (actionMasked == MotionEvent.ACTION_CANCEL) {
+                        for (ControlElement element : profile.getElements()) {
+                            int pid = element.getCurrentPointerId();
+                            if (pid != -1) {
+                                element.handleTouchUp(pid);
+                            }
+                        }
+                        handleMouseMovement(0, 0);
+                        if (touchpadView != null) touchpadView.onTouchEvent(event);
+                        invalidate();
+                        return true;
+                    }
+                    for (ControlElement element : profile.getElements()) {
+                        if (element.getCurrentPointerId() == pointerId) {
+                            for (int b = 0; b < element.getBindingCount(); b++) {
+                                Binding binding = element.getBindingAt(b);
+                                if (radialWheelManager != null && binding != null && binding != Binding.NONE) {
+                                    radialWheelManager.onBindingReleased(binding);
+                                }
+                            }
+                        }
+                        if (element.handleTouchUp(pointerId)) {
+                            handled = true;
+                            if (touchpadView != null && element.getBindingAt(0) == Binding.MOUSE_LEFT_BUTTON) {
+                                touchpadView.setPointerButtonLeftEnabled(true);
+                            }
+                        }
+                    }
+                    if (!handled && touchpadView != null) touchpadView.onTouchEvent(event);
                     invalidate();
                 }
             }
@@ -544,7 +780,47 @@ public class InputControlsView extends View {
         }
     }
 
+    private void initCachedVibrator(Context context) {
+        if (!cachedVibratorInitialized) {
+            cachedVibrator = (Vibrator) context.getSystemService(Context.VIBRATOR_SERVICE);
+            if (cachedVibrator != null && cachedVibrator.hasVibrator()) {
+                cachedHapticEffect = VibrationEffect.createOneShot(50, VibrationEffect.DEFAULT_AMPLITUDE);
+            } else {
+                cachedVibrator = null;
+            }
+            cachedVibratorInitialized = true;
+        }
+    }
+
     public boolean onKeyEvent(KeyEvent event) {
+        Binding b = null;
+        if (profile != null) {
+            ExternalController controller = profile.getController(event.getDeviceId());
+            if (controller != null) {
+                ExternalControllerBinding cb = controller.getControllerBinding(event.getKeyCode());
+                if (cb != null) b = cb.getBinding();
+            }
+        }
+        if (b == null) {
+            b = ExternalController.getGamepadBindingForKeyCode(event.getKeyCode());
+        }
+
+        if (radialWheelManager != null && b != null) {
+            if (event.getAction() == KeyEvent.ACTION_DOWN) {
+                if (radialWheelManager.onBindingHeld(b, getWidth() / 2f, getHeight() / 2f)) {
+                    return true;
+                }
+            } else if (event.getAction() == KeyEvent.ACTION_UP) {
+                if (radialWheelManager.onBindingReleased(b)) {
+                    return true;
+                }
+            }
+        }
+
+        if (radialWheelManager != null && radialWheelManager.isOpen()) {
+            return true;
+        }
+
         if (profile != null && event.getRepeatCount() == 0) {
             ExternalController controller = profile.getController(event.getDeviceId());
             if (controller != null) {
@@ -595,32 +871,48 @@ public class InputControlsView extends View {
     public void handleInputEvent(ExternalController controller, Binding binding, boolean isActionDown, float offset, boolean sendUpdate) {
         WinHandler winHandler = xServer != null ? xServer.getWinHandler() : null;
         if (binding.isGamepad()) {
-            GamepadState state = (controller != null) ? controller.remappedState : profile.getGamepadState();
-            int buttonIdx = binding.ordinal() - Binding.GAMEPAD_BUTTON_A.ordinal();
-            if (buttonIdx <= ExternalController.IDX_BUTTON_R2) {
-                if (buttonIdx == ExternalController.IDX_BUTTON_L2) state.triggerL = isActionDown ? (offset != 0 ? offset : 1.0f) : 0f;
-                else if (buttonIdx == ExternalController.IDX_BUTTON_R2) state.triggerR = isActionDown ? (offset != 0 ? offset : 1.0f) : 0f;
-                else state.setPressed(buttonIdx, isActionDown);
+            GamepadState state = (controller != null) ? controller.remappedState : (profile != null ? profile.getGamepadState() : null);
+            if (state == null) {
+                for (ExternalController ec : ExternalController.getControllers()) {
+                    state = ec.remappedState != null ? ec.remappedState : ec.state;
+                    break;
+                }
             }
-            else if (binding.name().contains("THUMB")) {
-                float val = (isActionDown && offset == 0) ? 1.0f : Math.abs(offset);
-                if (binding.name().contains("LEFT_THUMB_U")) state.thumbLY = isActionDown ? -val : 0;
-                else if (binding.name().contains("LEFT_THUMB_D")) state.thumbLY = isActionDown ? val : 0;
-                else if (binding.name().contains("LEFT_THUMB_L")) state.thumbLX = isActionDown ? -val : 0;
-                else if (binding.name().contains("LEFT_THUMB_R")) state.thumbLX = isActionDown ? val : 0;
-                else if (binding.name().contains("RIGHT_THUMB_U")) state.thumbRY = isActionDown ? -val : 0;
-                else if (binding.name().contains("RIGHT_THUMB_D")) state.thumbRY = isActionDown ? val : 0;
-                else if (binding.name().contains("RIGHT_THUMB_L")) state.thumbRX = isActionDown ? -val : 0;
-                else if (binding.name().contains("RIGHT_THUMB_R")) state.thumbRX = isActionDown ? val : 0;
-            }
-            else if (binding.name().contains("DPAD")) {
-                if (binding == Binding.GAMEPAD_DPAD_UP) state.dpad[0] = isActionDown;
-                else if (binding == Binding.GAMEPAD_DPAD_RIGHT) state.dpad[1] = isActionDown;
-                else if (binding == Binding.GAMEPAD_DPAD_DOWN) state.dpad[2] = isActionDown;
-                else if (binding == Binding.GAMEPAD_DPAD_LEFT) state.dpad[3] = isActionDown;
+            if (state != null) {
+                int buttonIdx = binding.ordinal() - Binding.GAMEPAD_BUTTON_A.ordinal();
+                if (buttonIdx <= ExternalController.IDX_BUTTON_R2) {
+                    if (buttonIdx == ExternalController.IDX_BUTTON_L2) state.triggerL = isActionDown ? (offset != 0 ? offset : 1.0f) : 0f;
+                    else if (buttonIdx == ExternalController.IDX_BUTTON_R2) state.triggerR = isActionDown ? (offset != 0 ? offset : 1.0f) : 0f;
+                    else state.setPressed(buttonIdx, isActionDown);
+                }
+                else if (binding.name().contains("THUMB")) {
+                    float val = (isActionDown && offset == 0) ? 1.0f : Math.abs(offset);
+                    if (binding.name().contains("LEFT_THUMB_U")) state.thumbLY = isActionDown ? -val : 0;
+                    else if (binding.name().contains("LEFT_THUMB_D")) state.thumbLY = isActionDown ? val : 0;
+                    else if (binding.name().contains("LEFT_THUMB_L")) state.thumbLX = isActionDown ? -val : 0;
+                    else if (binding.name().contains("LEFT_THUMB_R")) state.thumbLX = isActionDown ? val : 0;
+                    else if (binding.name().contains("RIGHT_THUMB_U")) state.thumbRY = isActionDown ? -val : 0;
+                    else if (binding.name().contains("RIGHT_THUMB_D")) state.thumbRY = isActionDown ? val : 0;
+                    else if (binding.name().contains("RIGHT_THUMB_L")) state.thumbRX = isActionDown ? -val : 0;
+                    else if (binding.name().contains("RIGHT_THUMB_R")) state.thumbRX = isActionDown ? val : 0;
+                }
+                else if (binding.name().contains("DPAD")) {
+                    if (binding == Binding.GAMEPAD_DPAD_UP) state.dpad[0] = isActionDown;
+                    else if (binding == Binding.GAMEPAD_DPAD_RIGHT) state.dpad[1] = isActionDown;
+                    else if (binding == Binding.GAMEPAD_DPAD_DOWN) state.dpad[2] = isActionDown;
+                    else if (binding == Binding.GAMEPAD_DPAD_LEFT) state.dpad[3] = isActionDown;
+                }
             }
 
-            if (winHandler != null && sendUpdate) { if (controller != null) winHandler.sendGamepadState(controller); else winHandler.sendGamepadState(); }
+            if (winHandler != null && sendUpdate) {
+                if (controller != null) winHandler.sendGamepadState(controller);
+                else {
+                    for (ExternalController ec : ExternalController.getControllers()) {
+                        winHandler.sendGamepadState(ec);
+                    }
+                    winHandler.sendGamepadState();
+                }
+            }
         }
         else {
             if (binding.name().startsWith("MOUSE_MOVE")) {
@@ -658,10 +950,11 @@ public class InputControlsView extends View {
     }
 
     public Bitmap getIcon(byte id) {
-        if (icons[id] == null) {
-            try (InputStream is = getContext().getAssets().open("inputcontrols/icons/"+id+".png")) { icons[id] = BitmapFactory.decodeStream(is); }
-            catch (IOException e) {}
-        }
-        return icons[id];
+        return getIcon((int)(id & 0xFF));
+    }
+
+    public Bitmap getIcon(int id) {
+        if (id <= 0) return null;
+        return com.winlator.cmod.inputcontrols.CustomIconManager.getInstance(getContext()).getIcon(id);
     }
 }

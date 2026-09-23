@@ -22,6 +22,7 @@ import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.PopupMenu;
+import android.widget.SeekBar;
 import android.widget.Spinner;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -121,17 +122,7 @@ public class ContainerDetailFragment extends Fragment {
     }
 
     private static void applyFieldSetLabelStyle(TextView textView, boolean isDarkMode) {
-//        Context context = textView.getContext();
-
-        if (isDarkMode) {
-            // Apply dark mode-specific attributes
-            textView.setTextColor(Color.parseColor("#cccccc")); // Set text color to #cccccc
-            textView.setBackgroundResource(R.color.window_background_color_dark); // Set dark background color
-        } else {
-            // Apply light mode-specific attributes (original FieldSetLabel)
-            textView.setTextColor(Color.parseColor("#bdbdbd")); // Set text color to #bdbdbd
-            textView.setBackgroundResource(R.color.window_background_color); // Set light background color
-        }
+        ThemeManager.applyFieldSetLabelStyle(textView, isDarkMode);
     }
 
 
@@ -144,6 +135,9 @@ public class ContainerDetailFragment extends Fragment {
 
         Spinner sWineVersion = view.findViewById(R.id.SWineVersion);
         sWineVersion.setPopupBackgroundResource(isDarkMode ? R.drawable.content_dialog_background_dark : R.drawable.content_dialog_background);
+
+        Spinner sDisplayDriver = view.findViewById(R.id.SDisplayDriver);
+        if (sDisplayDriver != null) sDisplayDriver.setPopupBackgroundResource(isDarkMode ? R.drawable.content_dialog_background_dark : R.drawable.content_dialog_background);
 
         Spinner sGraphicsDriver = view.findViewById(R.id.SGraphicsDriver);
         sGraphicsDriver.setPopupBackgroundResource(isDarkMode ? R.drawable.content_dialog_background_dark : R.drawable.content_dialog_background);
@@ -192,7 +186,9 @@ public class ContainerDetailFragment extends Fragment {
         sFEXCorePreset.setPopupBackgroundResource(isDarkMode ? R.drawable.content_dialog_background_dark : R.drawable.content_dialog_background);
 
         Spinner sStartupSelection = view.findViewById(R.id.SStartupSelection);
-        sStartupSelection.setPopupBackgroundResource(isDarkMode ? R.drawable.content_dialog_background_dark : R.drawable.content_dialog_background);
+        if (sStartupSelection != null) sStartupSelection.setPopupBackgroundResource(isDarkMode ? R.drawable.content_dialog_background_dark : R.drawable.content_dialog_background);
+
+        com.winlator.cmod.ThemeManager.applyThemeToView(view, getContext());
     }
 
     private void applyDynamicStylesRecursively(View view, boolean isDarkMode) {
@@ -256,12 +252,32 @@ public class ContainerDetailFragment extends Fragment {
         TextView fexCoreLabel = view.findViewById(R.id.TVFEXCore);
         applyFieldSetLabelStyle(fexCoreLabel, isDarkMode);
 
+        TextView ramBoosterLabel = view.findViewById(R.id.TVRamBooster);
+        applyFieldSetLabelStyle(ramBoosterLabel, isDarkMode);
+
+        view.findViewById(R.id.BTHelpRamBooster).setOnClickListener(v -> {
+            ContentDialog dialog = new ContentDialog(getContext(), R.layout.bcn_info_dialog);
+            dialog.setTitle("RAM Booster (LMK Trigger)");
+            dialog.setIcon(R.drawable.ic_driver_info);
+
+            TextView tvMessage = dialog.findViewById(R.id.TVInfoMessage);
+            String message = "<b>RAM Booster (Guide):</b><br/><br/>" +
+                    "This tool manages Android's memory by intentionally creating pressure to trigger the <b>Low Memory Killer (LMK)</b>. This helps prevent crashes and stuttering in heavy games.<br/><br/>" +
+                    "&#8226; <b>Crisis Threshold:</b> This is the 'Emergency' limit. When RAM usage hits this point (e.g., 90%), a heavy boost is applied. <b>How to use:</b> Set this to the level where your device usually feels unstable.<br/><br/>" +
+                    "&#8226; <b>Pre-Crisis Level:</b> This is the 'Preventive' limit. It applies a lighter pulse <i>before</i> RAM gets critical. <b>How to use:</b> Set this 5-10% lower than Crisis.<br/><br/>" +
+                    "&#8226; <b>Boost Intensity:</b> Defines how much 'fake' RAM demand is created. Higher intensity (e.g., 60%) clears more background apps but may cause a momentary system lag.<br/><br/>" +
+                    "&#8226; <b>Smart Auto:</b> (Recommended) Automatically adjusts thresholds based on your device and learns from results.<br/><br/>" +
+                    "&#8226; <b>Safety Floor:</b> Protects the emulator by stopping pressure if free RAM is too low.<br/><br/>" +
+                    "<b>Expert Warning (Manual Mode):</b><br/>" +
+                    "&#8226; <b>High Thresholds:</b> Setting Crisis > 95% or Pre-Crisis > 90% may trigger too late to prevent a crash.<br/>" +
+                    "&#8226; <b>High Intensities:</b> Values > 50% create massive pressure (up to 4GB). This effectively kills everything in the background but may cause significant system stutter or even crash the app if the OS decides it is a memory hog. Use with extreme caution!";
+            tvMessage.setText(android.text.Html.fromHtml(message, android.text.Html.FROM_HTML_MODE_LEGACY));
+            dialog.findViewById(R.id.BTCancel).setVisibility(View.GONE);
+            dialog.show();
+        });
+
         TextView systemLabel = view.findViewById(R.id.TVSystem);
         applyFieldSetLabelStyle(systemLabel, isDarkMode);  // Apply the dark or light mode styles
-
-        TextView gameControllerLabel = view.findViewById(R.id.TVUnifiedSystem);
-        applyFieldSetLabelStyle(gameControllerLabel, isDarkMode);  // Apply the dark or light mode styles
-
     }
 
     public boolean isEditMode() {
@@ -313,6 +329,40 @@ public class ContainerDetailFragment extends Fragment {
 
         loadScreenSizeSpinner(view, isEditMode() ? container.getScreenSize() : Container.DEFAULT_SCREEN_SIZE);
 
+        final Spinner sDisplayDriver = view.findViewById(R.id.SDisplayDriver);
+        updateDisplayDriverSpinner(context, sDisplayDriver);
+        String currentDisplayDriver = isEditMode() ? container.getDisplayDriver() : Container.DEFAULT_DISPLAY_DRIVER;
+        AppUtils.setSpinnerSelectionFromIdentifier(sDisplayDriver, currentDisplayDriver);
+
+        final View vDisplayDriverConfig = view.findViewById(R.id.BTDisplayDriverConfig);
+        if (StringUtils.parseIdentifier(currentDisplayDriver).equals("displayx")) {
+            vDisplayDriverConfig.setVisibility(View.VISIBLE);
+            vDisplayDriverConfig.setOnClickListener((v) -> (new com.winlator.cmod.contentdialog.DisplayXConfigDialog(vDisplayDriverConfig)).show());
+            vDisplayDriverConfig.setTag(isEditMode() ? container.getDisplayxConfig() : com.winlator.cmod.contentdialog.DisplayXConfigDialog.DEFAULT_CONFIG);
+        }
+        else {
+            vDisplayDriverConfig.setVisibility(View.GONE);
+        }
+
+        sDisplayDriver.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> parent, View v, int position, long id) {
+                String selectedItem = parent.getItemAtPosition(position).toString();
+                String identifier = StringUtils.parseIdentifier(selectedItem);
+                if (identifier.equals("displayx")) {
+                    vDisplayDriverConfig.setVisibility(View.VISIBLE);
+                    vDisplayDriverConfig.setOnClickListener((v1) -> (new com.winlator.cmod.contentdialog.DisplayXConfigDialog(vDisplayDriverConfig)).show());
+                    vDisplayDriverConfig.setTag(isEditMode() ? container.getDisplayxConfig() : com.winlator.cmod.contentdialog.DisplayXConfigDialog.DEFAULT_CONFIG);
+                }
+                else {
+                    vDisplayDriverConfig.setVisibility(View.GONE);
+                }
+            }
+
+            @Override
+            public void onNothingSelected(AdapterView<?> parent) {}
+        });
+
         final Spinner sGraphicsDriver = view.findViewById(R.id.SGraphicsDriver);
         
         final Spinner sDXWrapper = view.findViewById(R.id.SDXWrapper);
@@ -334,6 +384,8 @@ public class ContainerDetailFragment extends Fragment {
             BCNConfigDialog dialog = new BCNConfigDialog(vGraphicsDriverConfig);
             dialog.show();
         });
+        View vBCNRow = view.findViewById(R.id.LLBCNConfigRow);
+        if (vBCNRow != null) vBCNRow.setOnClickListener(v -> vBCNConfig.performClick());
 
         Spinner sAudioDriver = view.findViewById(R.id.SAudioDriver);
         AppUtils.setSpinnerSelectionFromIdentifier(sAudioDriver, isEditMode() ? container.getAudioDriver() : Container.DEFAULT_AUDIO_DRIVER);
@@ -350,11 +402,6 @@ public class ContainerDetailFragment extends Fragment {
 
         final CheckBox cbFullscreenStretched = view.findViewById(R.id.CBFullscreenStretched);
         cbFullscreenStretched.setChecked(isEditMode() && container.isFullscreenStretched());
-
-        final Spinner sControllerEmulation = view.findViewById(R.id.SControllerEmulation);
-        if (isEditMode()) sControllerEmulation.setSelection(container.getEmulationMode().ordinal());
-
-
 
         final EditText etLC_ALL = view.findViewById(R.id.ETlcall);
         Locale systemLocal = Locale.getDefault();
@@ -386,6 +433,109 @@ public class ContainerDetailFragment extends Fragment {
         final Spinner sFEXCorePreset = view.findViewById(R.id.SFEXCorePreset);
         FEXCorePresetManager.loadSpinner(sFEXCorePreset, isEditMode() ? container.getFEXCorePreset() : preferences.getString("fexcore_preset", FEXCorePreset.INTERMEDIATE));
 
+        final CheckBox cbRamBooster = view.findViewById(R.id.CBRamBooster);
+        final CheckBox cbRamBoosterToast = view.findViewById(R.id.CBRamBoosterToast);
+        final Spinner sRamBoosterProfile = view.findViewById(R.id.SRamBoosterProfile);
+        final View llRamBoosterThresholds = view.findViewById(R.id.LLRamBoosterThresholds);
+        final SeekBar sbRamBoosterCrisis = view.findViewById(R.id.SBRamBoosterCrisis);
+        final TextView tvRamBoosterCrisis = view.findViewById(R.id.TVRamBoosterCrisis);
+        final SeekBar sbRamBoosterPreCrisis = view.findViewById(R.id.SBRamBoosterPreCrisis);
+        final TextView tvRamBoosterPreCrisis = view.findViewById(R.id.TVRamBoosterPreCrisis);
+        final SeekBar sbRamBoosterCrisisIntensity = view.findViewById(R.id.SBRamBoosterCrisisIntensity);
+        final TextView tvRamBoosterCrisisIntensity = view.findViewById(R.id.TVRamBoosterCrisisIntensity);
+        final SeekBar sbRamBoosterPreCrisisIntensity = view.findViewById(R.id.SBRamBoosterPreCrisisIntensity);
+        final TextView tvRamBoosterPreCrisisIntensity = view.findViewById(R.id.TVRamBoosterPreCrisisIntensity);
+
+        cbRamBooster.setChecked(isEditMode() && container.isRamBoosterEnabled());
+        cbRamBoosterToast.setChecked(!isEditMode() || container.isRamBoosterToastEnabled());
+
+        final String[] ramBoosterProfileValues = getResources().getStringArray(R.array.ram_booster_profile_values);
+        AppUtils.setSpinnerSelectionFromValue(sRamBoosterProfile, isEditMode() ? container.getRamBoosterProfile() : "smart");
+
+        llRamBoosterThresholds.setVisibility(sRamBoosterProfile.getSelectedItemPosition() == 6 ? View.VISIBLE : View.GONE);
+        sRamBoosterProfile.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(android.widget.AdapterView<?> parent, View view, int position, long id) {
+                llRamBoosterThresholds.setVisibility(position == 6 ? View.VISIBLE : View.GONE);
+            }
+            @Override public void onNothingSelected(android.widget.AdapterView<?> parent) {}
+        });
+
+        int initialCrisis = isEditMode() ? container.getRamBoosterCrisisThreshold() : 90;
+        sbRamBoosterCrisis.setProgress(initialCrisis - 50);
+        tvRamBoosterCrisis.setText(initialCrisis + "%");
+        sbRamBoosterCrisis.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                int threshold = progress + 50;
+                tvRamBoosterCrisis.setText(threshold + "%");
+                if (fromUser && threshold > 95) {
+                    AppUtils.showToast(getContext(), "Expert: Setting threshold > 95% may trigger too late!");
+                }
+            }
+            @Override public void onStartTrackingTouch(SeekBar seekBar) {}
+            @Override public void onStopTrackingTouch(SeekBar seekBar) {}
+        });
+
+        int initialPreCrisis = isEditMode() ? container.getRamBoosterPreCrisisThreshold() : 83;
+        sbRamBoosterPreCrisis.setProgress(initialPreCrisis - 50);
+        tvRamBoosterPreCrisis.setText(initialPreCrisis + "%");
+        sbRamBoosterPreCrisis.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                int threshold = progress + 50;
+                tvRamBoosterPreCrisis.setText(threshold + "%");
+                if (fromUser && threshold > 90) {
+                    AppUtils.showToast(getContext(), "Expert: High pre-crisis level may overlap with Crisis threshold!");
+                }
+            }
+            @Override public void onStartTrackingTouch(SeekBar seekBar) {}
+            @Override public void onStopTrackingTouch(SeekBar seekBar) {}
+        });
+
+        int initialCrisisIntensity = isEditMode() ? container.getRamBoosterCrisisIntensity() : 45;
+        sbRamBoosterCrisisIntensity.setProgress(initialCrisisIntensity);
+        tvRamBoosterCrisisIntensity.setText(initialCrisisIntensity + "%");
+        sbRamBoosterCrisisIntensity.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                tvRamBoosterCrisisIntensity.setText(progress + "%");
+                if (fromUser && progress > 50) {
+                    AppUtils.showToast(getContext(), "Warning: High intensity may cause system instability!");
+                }
+            }
+            @Override public void onStartTrackingTouch(SeekBar seekBar) {}
+            @Override public void onStopTrackingTouch(SeekBar seekBar) {}
+        });
+
+        int initialPreCrisisIntensity = isEditMode() ? container.getRamBoosterPreCrisisIntensity() : 20;
+        sbRamBoosterPreCrisisIntensity.setProgress(initialPreCrisisIntensity);
+        tvRamBoosterPreCrisisIntensity.setText(initialPreCrisisIntensity + "%");
+        sbRamBoosterPreCrisisIntensity.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                tvRamBoosterPreCrisisIntensity.setText(progress + "%");
+                if (fromUser && progress > 35) {
+                    AppUtils.showToast(getContext(), "Note: High pre-crisis intensity clears more background RAM.");
+                }
+            }
+            @Override public void onStartTrackingTouch(SeekBar seekBar) {}
+            @Override public void onStopTrackingTouch(SeekBar seekBar) {}
+        });
+
+        sbRamBoosterCrisis.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                int threshold = progress + 50;
+                tvRamBoosterCrisis.setText(threshold + "%");
+                if (fromUser && threshold > 95) {
+                    AppUtils.showToast(getContext(), "Expert: Setting threshold > 95% may trigger too late!");
+                }
+            }
+            @Override public void onStartTrackingTouch(SeekBar seekBar) {}
+            @Override public void onStopTrackingTouch(SeekBar seekBar) {}
+        });
+
         String selectedDriver = sGraphicsDriver.getSelectedItem().toString();
         List<String> sGraphicsItemsList = new ArrayList<>(Arrays.asList(context.getResources().getStringArray(R.array.graphics_driver_entries)));
         sGraphicsDriver.setAdapter(new ArrayAdapter<>(context, android.R.layout.simple_spinner_dropdown_item, sGraphicsItemsList));
@@ -416,7 +566,7 @@ public class ContainerDetailFragment extends Fragment {
         createWinComponentsTab(view, isEditMode() ? container.getWinComponents() : Container.DEFAULT_WINCOMPONENTS);
         createDrivesTab(view);
 
-        AppUtils.setupTabLayout(view, R.id.TabLayout, R.id.LLTabWineConfiguration, R.id.LLTabWinComponents, R.id.LLTabEnvVars, R.id.LLTabDrives, R.id.LLTabAdvanced, R.id.LLTabXR);
+        AppUtils.setupTabLayout(view, R.id.TabLayout, R.id.LLTabGeneral, R.id.LLTabWineConfiguration, R.id.LLTabWinComponents, R.id.LLTabEnvVars, R.id.LLTabDrives, R.id.LLTabAdvanced, R.id.LLTabXR);
 
         TabLayout tabLayout = view.findViewById(R.id.TabLayout);
 
@@ -435,6 +585,8 @@ public class ContainerDetailFragment extends Fragment {
                 String envVars = envVarsView.getEnvVars();
                 String graphicsDriver = StringUtils.parseIdentifier(sGraphicsDriver.getSelectedItem());
                 String graphicsDriverConfig = vGraphicsDriverConfig.getTag().toString();
+                String displayDriver = StringUtils.parseIdentifier(sDisplayDriver.getSelectedItem());
+                String displayxConfig = vDisplayDriverConfig.getTag() != null ? vDisplayDriverConfig.getTag().toString() : com.winlator.cmod.contentdialog.DisplayXConfigDialog.DEFAULT_CONFIG;
                 HashMap<String, String> config = GraphicsDriverConfigDialog.parseGraphicsDriverConfig(graphicsDriverConfig);
                 if (config.get("version").isEmpty()) {
                     config.put("version", GPUInformation.isDriverSupported(DefaultVersion.WRAPPER_ADRENO, context) ? DefaultVersion.WRAPPER_ADRENO : DefaultVersion.WRAPPER);
@@ -461,8 +613,13 @@ public class ContainerDetailFragment extends Fragment {
                 String lc_all = etLC_ALL.getText().toString();
                 int primaryController = sPrimaryController.getSelectedItemPosition();
                 String controllerMapping = getControllerMapping(view);
-
-                UnifiedInputState.EmulationMode emulationMode = UnifiedInputState.EmulationMode.values()[sControllerEmulation.getSelectedItemPosition()];
+                boolean ramBoosterEnabled = cbRamBooster.isChecked();
+                boolean ramBoosterToastEnabled = cbRamBoosterToast.isChecked();
+                String ramBoosterProfile = ramBoosterProfileValues[sRamBoosterProfile.getSelectedItemPosition()];
+                int ramBoosterCrisis = sbRamBoosterCrisis.getProgress() + 50;
+                int ramBoosterPreCrisis = sbRamBoosterPreCrisis.getProgress() + 50;
+                int ramBoosterCrisisIntensity = sbRamBoosterCrisisIntensity.getProgress();
+                int ramBoosterPreCrisisIntensity = sbRamBoosterPreCrisisIntensity.getProgress();
 
                 if (isEditMode()) {
                     // Update existing container properties
@@ -471,6 +628,8 @@ public class ContainerDetailFragment extends Fragment {
                     container.setEnvVars(envVars);
                     container.setCPUList(cpuList);
                     container.setCPUListWoW64(cpuListWoW64);
+                    container.setDisplayDriver(displayDriver);
+                    container.setDisplayxConfig(displayxConfig);
                     container.setGraphicsDriver(graphicsDriver);
                     container.setGraphicsDriverConfig(graphicsDriverConfig);
                     container.setDXWrapper(dxwrapper);
@@ -480,12 +639,18 @@ public class ContainerDetailFragment extends Fragment {
                     container.setWinComponents(wincomponents);
                     container.setDrives(drives);
                     container.setShowFPS(showFPS);
-                    container.setEmulationMode(emulationMode);
                     container.setStartupSelection(startupSelection);
                     container.setBox64Version(box64Version);
                     container.setBox64Preset(box64Preset);
                     container.setFEXCoreVersion(fexcoreVersion);
                     container.setFEXCorePreset(fexcorePreset);
+                    container.setRamBoosterEnabled(ramBoosterEnabled);
+                    container.setRamBoosterToastEnabled(ramBoosterToastEnabled);
+                    container.setRamBoosterProfile(ramBoosterProfile);
+                    container.setRamBoosterCrisisThreshold(ramBoosterCrisis);
+                    container.setRamBoosterPreCrisisThreshold(ramBoosterPreCrisis);
+                    container.setRamBoosterCrisisIntensity(ramBoosterCrisisIntensity);
+                    container.setRamBoosterPreCrisisIntensity(ramBoosterPreCrisisIntensity);
                     container.setDesktopTheme(desktopTheme);
                     container.setMidiSoundFont(midiSoundFont);
                     container.setLC_ALL(lc_all);
@@ -502,6 +667,8 @@ public class ContainerDetailFragment extends Fragment {
                     data.put("envVars", envVars);
                     data.put("cpuList", cpuList);
                     data.put("cpuListWoW64", cpuListWoW64);
+                    data.put("displayDriver", displayDriver);
+                    data.put("displayxConfig", displayxConfig);
                     data.put("graphicsDriver", graphicsDriver);
                     data.put("graphicsDriverConfig", graphicsDriverConfig);
                     data.put("dxwrapper", dxwrapper);
@@ -512,14 +679,28 @@ public class ContainerDetailFragment extends Fragment {
                     data.put("drives", drives);
                     data.put("showFPS", showFPS);
                     data.put("fullscreenStretched", fullscreenStretched);
-                    data.put("emulationMode", emulationMode.name());
                     data.put("startupSelection", startupSelection);
                     data.put("box64Version", box64Version);
                     data.put("box64Preset", box64Preset);
                     data.put("fexcoreVersion", fexcoreVersion);
                     data.put("fexcorePreset", fexcorePreset);
+                    data.put("ramBoosterEnabled", ramBoosterEnabled);
+                    data.put("ramBoosterToastEnabled", ramBoosterToastEnabled);
+                    data.put("ramBoosterProfile", ramBoosterProfile);
+                    data.put("ramBoosterCrisisThreshold", ramBoosterCrisis);
+                    data.put("ramBoosterPreCrisisThreshold", ramBoosterPreCrisis);
+                    data.put("ramBoosterCrisisIntensity", ramBoosterCrisisIntensity);
+                    data.put("ramBoosterPreCrisisIntensity", ramBoosterPreCrisisIntensity);
+                    String selectedWine = sWineVersion.getSelectedItem() != null ? sWineVersion.getSelectedItem().toString() : "";
+                    if (selectedWine.isEmpty() || selectedWine.contains("No Wine Installed")) {
+                        AppUtils.showToast(context, "Please download a Wine runtime first.");
+                        com.winlator.cmod.contents.WineDownloader.showDownloadDialog(getActivity(), () -> {
+                            loadWineVersionSpinner(view, sWineVersion, sBox64Version);
+                        });
+                        return;
+                    }
                     data.put("desktopTheme", desktopTheme);
-                    data.put("wineVersion", sWineVersion.getSelectedItem().toString());
+                    data.put("wineVersion", selectedWine);
                     data.put("midiSoundFont", midiSoundFont);
                     data.put("lc_all", lc_all);
                     data.put("primaryController", primaryController);
@@ -549,10 +730,17 @@ public class ContainerDetailFragment extends Fragment {
     }
 
     private void saveWineRegistryKeys(View view) {
+        if (container == null || container.getRootDir() == null) return;
         File userRegFile = new File(container.getRootDir(), ".wine/user.reg");
+        File wineDir = userRegFile.getParentFile();
+        if (wineDir != null && !wineDir.exists()) wineDir.mkdirs();
         try (WineRegistryEditor registryEditor = new WineRegistryEditor(userRegFile)) {
             Spinner sMouseWarpOverride = view.findViewById(R.id.SMouseWarpOverride);
-            registryEditor.setStringValue("Software\\Wine\\DirectInput", "MouseWarpOverride", sMouseWarpOverride.getSelectedItem().toString().toLowerCase(Locale.ENGLISH));
+            if (sMouseWarpOverride != null && sMouseWarpOverride.getSelectedItem() != null) {
+                registryEditor.setStringValue("Software\\Wine\\DirectInput", "MouseWarpOverride", sMouseWarpOverride.getSelectedItem().toString().toLowerCase(Locale.ENGLISH));
+            }
+        } catch (Exception e) {
+            Log.w("ContainerDetailFragment", "Failed to save user.reg keys: " + e.getMessage());
         }
     }
 
@@ -943,13 +1131,17 @@ public class ContainerDetailFragment extends Fragment {
 
 
         view.findViewById(R.id.LLWineVersion).setVisibility(View.VISIBLE);
-        String[] versions = getResources().getStringArray(R.array.wine_entries);
-        ArrayList<String> wineVersions = new ArrayList<>();
-        wineVersions.addAll(Arrays.asList(versions));
-        for (ContentProfile profile : contentsManager.getProfiles(ContentProfile.ContentType.CONTENT_TYPE_WINE))
-            wineVersions.add(ContentsManager.getEntryName(profile));
-        for (ContentProfile profile : contentsManager.getProfiles(ContentProfile.ContentType.CONTENT_TYPE_PROTON))                                                      
-        	wineVersions.add(ContentsManager.getEntryName(profile));
+        View btnDownload = view.findViewById(R.id.BTDownloadWine);
+        if (btnDownload != null) {
+            btnDownload.setOnClickListener(v -> com.winlator.cmod.contents.WineDownloader.showDownloadDialog(getActivity(), () -> {
+                loadWineVersionSpinner(view, sWineVersion, sBox64Version);
+            }));
+        }
+
+        List<String> wineVersions = com.winlator.cmod.contents.WineDownloader.getInstalledWineVersions(context);
+        if (wineVersions.isEmpty()) {
+            wineVersions.add("(No Wine Installed - Tap Download)");
+        }
         sWineVersion.setAdapter(new ArrayAdapter<>(context, android.R.layout.simple_spinner_dropdown_item, wineVersions));
         if (isEditMode()) AppUtils.setSpinnerSelectionFromValue(sWineVersion, container.getWineVersion());
     }
@@ -990,6 +1182,12 @@ public class ContainerDetailFragment extends Fragment {
         spinner.setSelection(isEditMode() && (index != 0) ? index : defaultValue);
     }
 
+    public static void updateDisplayDriverSpinner(Context context, Spinner spinner) {
+        String[] originalItems = context.getResources().getStringArray(R.array.display_driver_entries);
+        List<String> itemList = new ArrayList<>(Arrays.asList(originalItems));
+        spinner.setAdapter(new ArrayAdapter<>(context, android.R.layout.simple_spinner_dropdown_item, itemList));
+    }
+
     public static void updateGraphicsDriverSpinner(Context context, Spinner spinner) {
         String[] originalItems = context.getResources().getStringArray(R.array.graphics_driver_entries);
         List<String> itemList = new ArrayList<>(Arrays.asList(originalItems));
@@ -1009,16 +1207,17 @@ public class ContainerDetailFragment extends Fragment {
             itemList = new ArrayList<>(Arrays.asList(originalItems));
         }
         if (!isArm64EC) {
-            for (ContentProfile profile : manager.getProfiles(ContentProfile.ContentType.CONTENT_TYPE_BOX64)) {
-                String entryName = ContentsManager.getEntryName(profile);
-                int firstDashIndex = entryName.indexOf('-');
-                itemList.add(entryName.substring(firstDashIndex + 1));
+            for (ContentProfile profile : manager.getInstalledProfiles(ContentProfile.ContentType.CONTENT_TYPE_BOX64)) {
+                String ver = profile.verName != null ? profile.verName : "";
+                if (ver.startsWith("box64-")) ver = ver.substring("box64-".length());
+                if (!itemList.contains(ver)) itemList.add(ver);
             }
         } else {
-            for (ContentProfile profile : manager.getProfiles(ContentProfile.ContentType.CONTENT_TYPE_WOWBOX64)) {
-                String entryName = ContentsManager.getEntryName(profile);
-                int firstDashIndex = entryName.indexOf('-');
-                itemList.add(entryName.substring(firstDashIndex + 1));
+            for (ContentProfile profile : manager.getInstalledProfiles(ContentProfile.ContentType.CONTENT_TYPE_WOWBOX64)) {
+                String ver = profile.verName != null ? profile.verName : "";
+                if (ver.startsWith("wowbox64-")) ver = ver.substring("wowbox64-".length());
+                else if (ver.startsWith("wow-box64-")) ver = ver.substring("wow-box64-".length());
+                if (!itemList.contains(ver)) itemList.add(ver);
             }
         }
         spinner.setAdapter(new ArrayAdapter<>(context, android.R.layout.simple_spinner_dropdown_item, itemList));

@@ -90,10 +90,7 @@ public class ShortcutSettingsDialog extends ContentDialog {
         LinearLayout llContent = findViewById(R.id.LLContent);
         llContent.getLayoutParams().width = AppUtils.getPreferredDialogWidth(context, 0.85f, 0.7f);
 
-        SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(context);
-        boolean isDarkMode = prefs.getBoolean("dark_mode", true);
-
-        applyDynamicStyles(findViewById(R.id.LLContent), isDarkMode);
+        com.winlator.cmod.ThemeManager.applyThemeToView(getContentView(), context);
 
         // Initialize the turnip version TextView
         tvGraphicsDriverVersion = findViewById(R.id.TVGraphicsDriverVersion);
@@ -109,6 +106,39 @@ public class ShortcutSettingsDialog extends ContentDialog {
 
         loadScreenSizeSpinner(getContentView(), shortcut.getExtra("screenSize", shortcut.container.getScreenSize()), isDarkMode);
 
+        final Spinner sDisplayDriver = findViewById(R.id.SDisplayDriver);
+        ContainerDetailFragment.updateDisplayDriverSpinner(context, sDisplayDriver);
+        String currentDisplayDriver = shortcut.getExtra("displayDriver", shortcut.container.getDisplayDriver());
+        AppUtils.setSpinnerSelectionFromIdentifier(sDisplayDriver, currentDisplayDriver);
+
+        final View vDisplayDriverConfig = findViewById(R.id.BTDisplayDriverConfig);
+        if (com.winlator.cmod.core.StringUtils.parseIdentifier(currentDisplayDriver).equals("displayx")) {
+            vDisplayDriverConfig.setVisibility(View.VISIBLE);
+            vDisplayDriverConfig.setOnClickListener((v) -> (new DisplayXConfigDialog(vDisplayDriverConfig)).show());
+            vDisplayDriverConfig.setTag(shortcut.getExtra("displayxConfig", shortcut.container.getDisplayxConfig()));
+        }
+        else {
+            vDisplayDriverConfig.setVisibility(View.GONE);
+        }
+
+        sDisplayDriver.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                String selectedItem = parent.getItemAtPosition(position).toString();
+                String identifier = com.winlator.cmod.core.StringUtils.parseIdentifier(selectedItem);
+                if (identifier.equals("displayx")) {
+                    vDisplayDriverConfig.setVisibility(View.VISIBLE);
+                    vDisplayDriverConfig.setOnClickListener((v) -> (new DisplayXConfigDialog(vDisplayDriverConfig)).show());
+                    vDisplayDriverConfig.setTag(shortcut.getExtra("displayxConfig", shortcut.container.getDisplayxConfig()));
+                }
+                else {
+                    vDisplayDriverConfig.setVisibility(View.GONE);
+                }
+            }
+
+            @Override
+            public void onNothingSelected(AdapterView<?> parent) {}
+        });
 
         final Spinner sGraphicsDriver = findViewById(R.id.SGraphicsDriver);
         
@@ -120,18 +150,20 @@ public class ShortcutSettingsDialog extends ContentDialog {
         
         contentsManager.syncContents();
 
-        final View vGraphicsDriverConfig = findViewById(R.id.BTGraphicsDriverConfig);
-        vGraphicsDriverConfig.setTag(shortcut.getExtra("graphicsDriverConfig", shortcut.container.getGraphicsDriverConfig()));
-        
         final View vDXWrapperConfig = findViewById(R.id.BTDXWrapperConfig);
         vDXWrapperConfig.setTag(shortcut.getExtra("dxwrapperConfig", shortcut.container.getDXWrapperConfig()));
+
+        final View vGraphicsDriverConfig = findViewById(R.id.BTGraphicsDriverConfig);
+        vGraphicsDriverConfig.setTag(shortcut.getExtra("graphicsDriverConfig", shortcut.container.getGraphicsDriverConfig()));
+
+        findViewById(R.id.BTBCNConfig).setOnClickListener(v -> new BCNConfigDialog(vGraphicsDriverConfig).show());
+        View vBCNRow = findViewById(R.id.LLBCNConfigRow);
+        if (vBCNRow != null) vBCNRow.setOnClickListener(v -> findViewById(R.id.BTBCNConfig).performClick());
 
         loadGraphicsDriverSpinner(sGraphicsDriver, sDXWrapper, vGraphicsDriverConfig, shortcut.getExtra("graphicsDriver", shortcut.container.getGraphicsDriver()),
             shortcut.getExtra("dxwrapper", shortcut.container.getDXWrapper()));
 
         findViewById(R.id.BTHelpDXWrapper).setOnClickListener((v) -> AppUtils.showHelpBox(context, v, R.string.dxwrapper_help_content));
-
-        findViewById(R.id.BTHelpGtaOptimization).setOnClickListener((v) -> AppUtils.showHelpBox(context, v, "Applies graphics and CPU optimizations for GTA V to improve performance on low-end hardware."));
 
         final Spinner sAudioDriver = findViewById(R.id.SAudioDriver);
         AppUtils.setSpinnerSelectionFromIdentifier(sAudioDriver, shortcut.getExtra("audioDriver", shortcut.container.getAudioDriver()));
@@ -207,17 +239,6 @@ public class ShortcutSettingsDialog extends ContentDialog {
         boolean fullscreenStretched = shortcut.getExtra("fullscreenStretched", "0").equals("1");
         cbFullscreenStretched.setChecked(fullscreenStretched);
 
-        final CheckBox cbGtaOptimization = findViewById(R.id.CBGtaOptimization);
-        boolean gtaOptimization = shortcut.getExtra("gtaOptimization", "0").equals("1");
-        cbGtaOptimization.setChecked(gtaOptimization);
-
-        final Spinner sControllerEmulation = findViewById(R.id.SControllerEmulation);
-        try {
-            sControllerEmulation.setSelection(UnifiedInputState.EmulationMode.valueOf(shortcut.getExtra("emulationMode", shortcut.container.getEmulationMode().name())).ordinal());
-        } catch (IllegalArgumentException e) {
-            sControllerEmulation.setSelection(UnifiedInputState.EmulationMode.GAME_CONTROLLER.ordinal());
-        }
-
         final Spinner sBox64Preset = findViewById(R.id.SBox64Preset);
         Box64PresetManager.loadSpinner("box64", sBox64Preset, shortcut.getExtra("box64Preset", shortcut.container.getBox64Preset()));
 
@@ -226,6 +247,117 @@ public class ShortcutSettingsDialog extends ContentDialog {
 
         final Spinner sFEXCorePreset = findViewById(R.id.SFEXCorePreset);
         FEXCorePresetManager.loadSpinner(sFEXCorePreset, shortcut.getExtra("fexcorePreset", shortcut.container.getFEXCorePreset()));
+
+        final CheckBox cbRamBooster = findViewById(R.id.CBRamBooster);
+        final CheckBox cbRamBoosterToast = findViewById(R.id.CBRamBoosterToast);
+        final Spinner sRamBoosterProfile = findViewById(R.id.SRamBoosterProfile);
+        final View llRamBoosterThresholds = findViewById(R.id.LLRamBoosterThresholds);
+        final SeekBar sbRamBoosterCrisis = findViewById(R.id.SBRamBoosterCrisis);
+        final TextView tvRamBoosterCrisis = findViewById(R.id.TVRamBoosterCrisis);
+        final SeekBar sbRamBoosterPreCrisis = findViewById(R.id.SBRamBoosterPreCrisis);
+        final TextView tvRamBoosterPreCrisis = findViewById(R.id.TVRamBoosterPreCrisis);
+        final SeekBar sbRamBoosterCrisisIntensity = findViewById(R.id.SBRamBoosterCrisisIntensity);
+        final TextView tvRamBoosterCrisisIntensity = findViewById(R.id.TVRamBoosterCrisisIntensity);
+        final SeekBar sbRamBoosterPreCrisisIntensity = findViewById(R.id.SBRamBoosterPreCrisisIntensity);
+        final TextView tvRamBoosterPreCrisisIntensity = findViewById(R.id.TVRamBoosterPreCrisisIntensity);
+
+        findViewById(R.id.BTHelpRamBooster).setOnClickListener(v -> {
+            ContentDialog dialog = new ContentDialog(getContext(), R.layout.bcn_info_dialog);
+            dialog.setTitle("RAM Booster (LMK Trigger)");
+            dialog.setIcon(R.drawable.ic_driver_info);
+
+            TextView tvMessage = dialog.findViewById(R.id.TVInfoMessage);
+            String message = "<b>RAM Booster (Guide):</b><br/><br/>" +
+                    "This tool manages Android's memory by intentionally creating pressure to trigger the <b>Low Memory Killer (LMK)</b>. This helps prevent crashes and stuttering in heavy games.<br/><br/>" +
+                    "&#8226; <b>Crisis Threshold:</b> This is the 'Emergency' limit. When RAM usage hits this point (e.g., 90%), a heavy boost is applied. <b>How to use:</b> Set this to the level where your device usually feels unstable.<br/><br/>" +
+                    "&#8226; <b>Pre-Crisis Level:</b> This is the 'Preventive' limit. It applies a lighter pulse <i>before</i> RAM gets critical. <b>How to use:</b> Set this 5-10% lower than Crisis.<br/><br/>" +
+                    "&#8226; <b>Boost Intensity:</b> Defines how much 'fake' RAM demand is created. Higher intensity (e.g., 60%) clears more background apps but may cause a momentary system lag.<br/><br/>" +
+                    "&#8226; <b>Smart Auto:</b> (Recommended) Automatically adjusts thresholds based on your device and learns from results.<br/><br/>" +
+                    "&#8226; <b>Safety Floor:</b> Protects the emulator by stopping pressure if free RAM is too low.<br/><br/>" +
+                    "<b>Expert Warning (Manual Mode):</b><br/>" +
+                    "&#8226; <b>High Thresholds:</b> Setting Crisis > 95% or Pre-Crisis > 90% may trigger too late to prevent a crash.<br/>" +
+                    "&#8226; <b>High Intensities:</b> Values > 50% create massive pressure (up to 4GB). This effectively kills everything in the background but may cause significant system stutter or even crash the app if the OS decides it is a memory hog. Use with extreme caution!";
+            tvMessage.setText(android.text.Html.fromHtml(message, android.text.Html.FROM_HTML_MODE_LEGACY));
+            dialog.findViewById(R.id.BTCancel).setVisibility(View.GONE);
+            dialog.show();
+        });
+
+        cbRamBooster.setChecked(shortcut.getExtra("ramBoosterEnabled", shortcut.container.isRamBoosterEnabled() ? "1" : "0").equals("1"));
+        cbRamBoosterToast.setChecked(shortcut.getExtra("ramBoosterToastEnabled", shortcut.container.isRamBoosterToastEnabled() ? "1" : "0").equals("1"));
+
+        final String[] ramBoosterProfileValues = getContext().getResources().getStringArray(R.array.ram_booster_profile_values);
+        AppUtils.setSpinnerSelectionFromValue(sRamBoosterProfile, shortcut.getExtra("ramBoosterProfile", shortcut.container.getRamBoosterProfile()));
+
+        llRamBoosterThresholds.setVisibility(sRamBoosterProfile.getSelectedItemPosition() == 6 ? View.VISIBLE : View.GONE);
+        sRamBoosterProfile.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(android.widget.AdapterView<?> parent, View view, int position, long id) {
+                llRamBoosterThresholds.setVisibility(position == 6 ? View.VISIBLE : View.GONE);
+            }
+            @Override public void onNothingSelected(android.widget.AdapterView<?> parent) {}
+        });
+
+        int initialCrisis = Integer.parseInt(shortcut.getExtra("ramBoosterCrisisThreshold", String.valueOf(shortcut.container.getRamBoosterCrisisThreshold())));
+        sbRamBoosterCrisis.setProgress(initialCrisis - 50);
+        tvRamBoosterCrisis.setText(initialCrisis + "%");
+        sbRamBoosterCrisis.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                int threshold = progress + 50;
+                tvRamBoosterCrisis.setText(threshold + "%");
+                if (fromUser && threshold > 95) {
+                    AppUtils.showToast(getContext(), "Expert: Setting threshold > 95% may trigger too late!");
+                }
+            }
+            @Override public void onStartTrackingTouch(SeekBar seekBar) {}
+            @Override public void onStopTrackingTouch(SeekBar seekBar) {}
+        });
+
+        int initialPreCrisis = Integer.parseInt(shortcut.getExtra("ramBoosterPreCrisisThreshold", String.valueOf(shortcut.container.getRamBoosterPreCrisisThreshold())));
+        sbRamBoosterPreCrisis.setProgress(initialPreCrisis - 50);
+        tvRamBoosterPreCrisis.setText(initialPreCrisis + "%");
+        sbRamBoosterPreCrisis.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                int threshold = progress + 50;
+                tvRamBoosterPreCrisis.setText(threshold + "%");
+                if (fromUser && threshold > 90) {
+                    AppUtils.showToast(getContext(), "Expert: High pre-crisis level may overlap with Crisis threshold!");
+                }
+            }
+            @Override public void onStartTrackingTouch(SeekBar seekBar) {}
+            @Override public void onStopTrackingTouch(SeekBar seekBar) {}
+        });
+
+        int initialCrisisIntensity = Integer.parseInt(shortcut.getExtra("ramBoosterCrisisIntensity", String.valueOf(shortcut.container.getRamBoosterCrisisIntensity())));
+        sbRamBoosterCrisisIntensity.setProgress(initialCrisisIntensity);
+        tvRamBoosterCrisisIntensity.setText(initialCrisisIntensity + "%");
+        sbRamBoosterCrisisIntensity.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                tvRamBoosterCrisisIntensity.setText(progress + "%");
+                if (fromUser && progress > 50) {
+                    AppUtils.showToast(getContext(), "Warning: High intensity may cause system instability!");
+                }
+            }
+            @Override public void onStartTrackingTouch(SeekBar seekBar) {}
+            @Override public void onStopTrackingTouch(SeekBar seekBar) {}
+        });
+
+        int initialPreCrisisIntensity = Integer.parseInt(shortcut.getExtra("ramBoosterPreCrisisIntensity", String.valueOf(shortcut.container.getRamBoosterPreCrisisIntensity())));
+        sbRamBoosterPreCrisisIntensity.setProgress(initialPreCrisisIntensity);
+        tvRamBoosterPreCrisisIntensity.setText(initialPreCrisisIntensity + "%");
+        sbRamBoosterPreCrisisIntensity.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                tvRamBoosterPreCrisisIntensity.setText(progress + "%");
+                if (fromUser && progress > 35) {
+                    AppUtils.showToast(getContext(), "Note: High pre-crisis intensity clears more background RAM.");
+                }
+            }
+            @Override public void onStartTrackingTouch(SeekBar seekBar) {}
+            @Override public void onStopTrackingTouch(SeekBar seekBar) {}
+        });
 
         final Spinner sControlsProfile = findViewById(R.id.SControlsProfile);
         loadControlsProfileSpinner(sControlsProfile, shortcut.getExtra("controlsProfile", "0"));
@@ -244,7 +376,7 @@ public class ShortcutSettingsDialog extends ContentDialog {
 
         final EnvVarsView envVarsView = createEnvVarsTab();
 
-        AppUtils.setupTabLayout(getContentView(), R.id.TabLayout, R.id.LLTabWinComponents, R.id.LLTabEnvVars, R.id.LLTabAdvanced);
+        AppUtils.setupTabLayout(getContentView(), R.id.TabLayout, R.id.LLTabGeneral, R.id.LLTabWinComponents, R.id.LLTabEnvVars, R.id.LLTabAdvanced);
 
         TabLayout tabLayout = findViewById(R.id.TabLayout);
 
@@ -274,53 +406,12 @@ public class ShortcutSettingsDialog extends ContentDialog {
         final Spinner sStartupSelection = findViewById(R.id.SStartupSelection);
         sStartupSelection.setSelection(Integer.parseInt(shortcut.getExtra("startupSelection", String.valueOf(shortcut.container.getStartupSelection()))));
 
-        final Spinner sSharpnessEffect = findViewById(R.id.SSharpnessEffect);
-        final SeekBar sbSharpnessLevel = findViewById(R.id.SBSharpnessLevel);
-        final SeekBar sbSharpnessDenoise = findViewById(R.id.SBSharpnessDenoise);
-        final TextView tvSharpnessLevel = findViewById(R.id.TVSharpnessLevel);
-        final TextView tvSharpnessDenoise = findViewById(R.id.TVSharpnessDenoise);
 
-        AppUtils.setSpinnerSelectionFromValue(sSharpnessEffect, shortcut.getExtra("sharpnessEffect", "None"));
-
-        sbSharpnessLevel.setProgress(Integer.parseInt(shortcut.getExtra("sharpnessLevel", "100")));
-        tvSharpnessLevel.setText(shortcut.getExtra("sharpnessLevel", "100") + "%");
-        sbSharpnessLevel.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
-            @Override
-            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
-                tvSharpnessLevel.setText(progress + "%");
-            }
-
-            @Override
-            public void onStartTrackingTouch(SeekBar seekBar) {
-
-            }
-
-            @Override
-            public void onStopTrackingTouch(SeekBar seekBar) {
-
-            }
-        });
-        sbSharpnessDenoise.setProgress(Integer.parseInt(shortcut.getExtra("sharpnessDenoise", "100")));
-        tvSharpnessDenoise.setText(shortcut.getExtra("sharpnessDenoise", "100") + "%");
-        sbSharpnessDenoise.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
-            @Override
-            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
-                tvSharpnessDenoise.setText(progress + "%");
-            }
-
-            @Override
-            public void onStartTrackingTouch(SeekBar seekBar) {
-
-            }
-
-            @Override
-            public void onStopTrackingTouch(SeekBar seekBar) {
-
-            }
-        });
 
         final CPUListView cpuListView = findViewById(R.id.CPUListView);
         cpuListView.setCheckedCPUList(shortcut.getExtra("cpuList", shortcut.container.getCPUList(true)));
+
+        com.winlator.cmod.ThemeManager.applyThemeToView(getContentView(), context);
 
         setOnConfirmCallback(() -> {
             String name = etName.getText().toString().trim();
@@ -346,9 +437,6 @@ public class ShortcutSettingsDialog extends ContentDialog {
                 String midiSoundFont = sMIDISoundFont.getSelectedItemPosition() == 0 ? "" : sMIDISoundFont.getSelectedItem().toString();
                 String screenSize = containerDetailFragment.getScreenSize(getContentView());
 
-                UnifiedInputState.EmulationMode emulationMode = UnifiedInputState.EmulationMode.values()[sControllerEmulation.getSelectedItemPosition()];
-                shortcut.putExtra("emulationMode", emulationMode.name());
-
                 boolean disabledXInput = cbDisabledXInput.isChecked();
                 shortcut.putExtra("disableXinput", disabledXInput ? "1" : null);
 
@@ -358,6 +446,8 @@ public class ShortcutSettingsDialog extends ContentDialog {
                 String execArgs = etExecArgs.getText().toString();
                 shortcut.putExtra("execArgs", !execArgs.isEmpty() ? execArgs : null);
                 shortcut.putExtra("screenSize", screenSize);
+                shortcut.putExtra("displayDriver", com.winlator.cmod.core.StringUtils.parseIdentifier(sDisplayDriver.getSelectedItem()));
+                shortcut.putExtra("displayxConfig", vDisplayDriverConfig.getTag() != null ? vDisplayDriverConfig.getTag().toString() : DisplayXConfigDialog.DEFAULT_CONFIG);
                 shortcut.putExtra("graphicsDriver", graphicsDriver);
                 shortcut.putExtra("graphicsDriverConfig", graphicsDriverConfig);
                 shortcut.putExtra("dxwrapper", dxwrapper);
@@ -368,7 +458,6 @@ public class ShortcutSettingsDialog extends ContentDialog {
                 shortcut.putExtra("lc_all", lc_all);
 
                 shortcut.putExtra("fullscreenStretched", cbFullscreenStretched.isChecked() ? "1" : null);
-                shortcut.putExtra("gtaOptimization", cbGtaOptimization.isChecked() ? "1" : null);
 
                 String wincomponents = containerDetailFragment.getWinComponents(getContentView());
                 shortcut.putExtra("wincomponents", wincomponents);
@@ -385,15 +474,18 @@ public class ShortcutSettingsDialog extends ContentDialog {
                 String box64Preset = Box64PresetManager.getSpinnerSelectedId(sBox64Preset);
                 shortcut.putExtra("box64Preset", box64Preset);
 
+                shortcut.putExtra("ramBoosterEnabled", cbRamBooster.isChecked() ? "1" : "0");
+                shortcut.putExtra("ramBoosterToastEnabled", cbRamBoosterToast.isChecked() ? "1" : "0");
+                shortcut.putExtra("ramBoosterProfile", ramBoosterProfileValues[sRamBoosterProfile.getSelectedItemPosition()]);
+                shortcut.putExtra("ramBoosterCrisisThreshold", String.valueOf(sbRamBoosterCrisis.getProgress() + 50));
+                shortcut.putExtra("ramBoosterPreCrisisThreshold", String.valueOf(sbRamBoosterPreCrisis.getProgress() + 50));
+                shortcut.putExtra("ramBoosterCrisisIntensity", String.valueOf(sbRamBoosterCrisisIntensity.getProgress()));
+                shortcut.putExtra("ramBoosterPreCrisisIntensity", String.valueOf(sbRamBoosterPreCrisisIntensity.getProgress()));
+
                 byte startupSelection = (byte)sStartupSelection.getSelectedItemPosition();
                 shortcut.putExtra("startupSelection", String.valueOf(startupSelection));
 
-                String sharpeningEffect = sSharpnessEffect.getSelectedItem().toString();
-                String sharpeningLevel = String.valueOf(sbSharpnessLevel.getProgress());
-                String sharpeningDenoise = String.valueOf(sbSharpnessDenoise.getProgress());
-                shortcut.putExtra("sharpnessEffect", sharpeningEffect);
-                shortcut.putExtra("sharpnessLevel", sharpeningLevel);
-                shortcut.putExtra("sharpnessDenoise", sharpeningDenoise);
+
 
                 ArrayList<ControlsProfile> profiles = inputControlsManager.getProfiles(true);
                 int controlsProfile = sControlsProfile.getSelectedItemPosition() > 0 ? profiles.get(sControlsProfile.getSelectedItemPosition() - 1).id : 0;
@@ -408,47 +500,16 @@ public class ShortcutSettingsDialog extends ContentDialog {
         });
     }
 
-    // Utility method to apply styles to dynamically added TextViews based on their content
-    private void applyFieldSetLabelStylesDynamically(ViewGroup rootView, boolean isDarkMode) {
-        for (int i = 0; i < rootView.getChildCount(); i++) {
-            View child = rootView.getChildAt(i);
-            if (child instanceof ViewGroup) {
-                applyFieldSetLabelStylesDynamically((ViewGroup) child, isDarkMode); // Recursive call for nested ViewGroups
-            } else if (child instanceof TextView) {
-                TextView textView = (TextView) child;
-                // Apply the style based on the content of the TextView
-                if (isFieldSetLabel(textView.getText().toString())) {
-                    applyFieldSetLabelStyle(textView, isDarkMode);
-                }
-            }
-        }
-    }
-
-    // Method to check if the text content matches any fieldset label
-    private boolean isFieldSetLabel(String text) {
-        return text.equalsIgnoreCase("DirectX") ||
-                text.equalsIgnoreCase("General") ||
-                text.equalsIgnoreCase("Box64") ||
-                text.equalsIgnoreCase("Input Controls") ||
-                text.equalsIgnoreCase("Unified Control System") ||
-                text.equalsIgnoreCase("System");
-    }
-
     public void onWinComponentsViewsAdded(boolean isDarkMode) {
-        // Apply styles to all dynamically added TextViews
-        ViewGroup llContent = findViewById(R.id.LLContent);
-        applyFieldSetLabelStylesDynamically(llContent, isDarkMode);
+        com.winlator.cmod.ThemeManager.applyThemeToView(getContentView(), fragment.getContext());
     }
-
 
     public static void loadScreenSizeSpinner(View view, String selectedValue, boolean isDarkMode) {
         final Spinner sScreenSize = view.findViewById(R.id.SScreenSize);
-
         final LinearLayout llCustomScreenSize = view.findViewById(R.id.LLCustomScreenSize);
 
-        applyDarkThemeToEditText(view.findViewById(R.id.ETScreenWidth), isDarkMode);
-        applyDarkThemeToEditText(view.findViewById(R.id.ETScreenHeight), isDarkMode);
-
+        com.winlator.cmod.ThemeManager.applyThemeToView(view.findViewById(R.id.ETScreenWidth), view.getContext());
+        com.winlator.cmod.ThemeManager.applyThemeToView(view.findViewById(R.id.ETScreenHeight), view.getContext());
 
         sScreenSize.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
             @Override
@@ -467,73 +528,6 @@ public class ShortcutSettingsDialog extends ContentDialog {
             String[] screenSize = selectedValue.split("x");
             ((EditText)view.findViewById(R.id.ETScreenWidth)).setText(screenSize[0]);
             ((EditText)view.findViewById(R.id.ETScreenHeight)).setText(screenSize[1]);
-        }
-    }
-
-    private void applyDynamicStyles(View view, boolean isDarkMode) {
-
-        // Update edit text
-        EditText etName = view.findViewById(R.id.ETName);
-        applyDarkThemeToEditText(etName, isDarkMode);
-
-        // Update Spinners
-        Spinner sGraphicsDriver = view.findViewById(R.id.SGraphicsDriver);
-        Spinner sDXWrapper = view.findViewById(R.id.SDXWrapper);
-        Spinner sAudioDriver = view.findViewById(R.id.SAudioDriver);
-        Spinner sEmulatorSpinner = view.findViewById(R.id.SEmulator);
-        Spinner sBox64Preset = view.findViewById(R.id.SBox64Preset);
-        Spinner sControlsProfile = view.findViewById(R.id.SControlsProfile);
-        Spinner sMIDISoundFont = view.findViewById(R.id.SMIDISoundFont);
-        Spinner sBox64Version = view.findViewById(R.id.SBox64Version);
-        Spinner sFEXCoreVersion = view.findViewById(R.id.SFEXCoreVersion);
-        Spinner sFEXCorePreset = view.findViewById(R.id.SFEXCorePreset);
-        Spinner sStartupSelection = findViewById(R.id.SStartupSelection);
-        Spinner sControllerEmulation = view.findViewById(R.id.SControllerEmulation);
-        
-
-        // Set dark or light mode background for spinners
-        sGraphicsDriver.setPopupBackgroundResource(isDarkMode ? R.drawable.content_dialog_background_dark : R.drawable.content_dialog_background);
-        sDXWrapper.setPopupBackgroundResource(isDarkMode ? R.drawable.content_dialog_background_dark : R.drawable.content_dialog_background);
-        sAudioDriver.setPopupBackgroundResource(isDarkMode ? R.drawable.content_dialog_background_dark : R.drawable.content_dialog_background);
-        sEmulatorSpinner.setPopupBackgroundResource(isDarkMode ? R.drawable.content_dialog_background_dark : R.drawable.content_dialog_background);
-        sBox64Preset.setPopupBackgroundResource(isDarkMode ? R.drawable.content_dialog_background_dark : R.drawable.content_dialog_background);
-        sControlsProfile.setPopupBackgroundResource(isDarkMode ? R.drawable.content_dialog_background_dark : R.drawable.content_dialog_background);
-        sMIDISoundFont.setPopupBackgroundResource(isDarkMode ? R.drawable.content_dialog_background_dark : R.drawable.content_dialog_background);
-        sBox64Version.setPopupBackgroundResource(isDarkMode ? R.drawable.content_dialog_background_dark : R.drawable.content_dialog_background);
-        sFEXCorePreset.setPopupBackgroundResource(isDarkMode ? R.drawable.content_dialog_background_dark : R.drawable.content_dialog_background);
-        sFEXCoreVersion.setPopupBackgroundResource(isDarkMode ? R.drawable.content_dialog_background_dark : R.drawable.content_dialog_background);
-        sStartupSelection.setPopupBackgroundResource(isDarkMode ? R.drawable.content_dialog_background_dark : R.drawable.content_dialog_background);
-        sControllerEmulation.setPopupBackgroundResource(isDarkMode ? R.drawable.content_dialog_background_dark : R.drawable.content_dialog_background);
-
-//        EditText etLC_ALL = view.findViewById(R.id.ETlcall);
-        EditText etExecArgs = view.findViewById(R.id.ETExecArgs);
-
-//        applyDarkThemeToEditText(etLC_ALL, isDarkMode);
-        applyDarkThemeToEditText(etExecArgs, isDarkMode);
-
-    }
-
-    private void applyFieldSetLabelStyle(TextView textView, boolean isDarkMode) {
-        if (isDarkMode) {
-            // Apply dark mode-specific attributes
-            textView.setTextColor(Color.parseColor("#cccccc")); // Set text color to #cccccc
-            textView.setBackgroundColor(Color.parseColor("#424242")); // Set dark background color
-        } else {
-            // Apply light mode-specific attributes
-            textView.setTextColor(Color.parseColor("#bdbdbd")); // Set text color to #bdbdbd
-            textView.setBackgroundResource(R.color.window_background_color); // Set light background color
-        }
-    }
-
-    private static void applyDarkThemeToEditText(EditText editText, boolean isDarkMode) {
-        if (isDarkMode) {
-            editText.setTextColor(Color.WHITE);
-            editText.setHintTextColor(Color.GRAY);
-            editText.setBackgroundResource(R.drawable.edit_text_dark);
-        } else {
-            editText.setTextColor(Color.BLACK);
-            editText.setHintTextColor(Color.GRAY);
-            editText.setBackgroundResource(R.drawable.edit_text);
         }
     }
 
@@ -640,16 +634,17 @@ public class ShortcutSettingsDialog extends ContentDialog {
         else
             itemList = new ArrayList<>(Arrays.asList(context.getResources().getStringArray(R.array.box64_version_entries)));
         if (!isArm64EC) {
-            for (ContentProfile profile : manager.getProfiles(ContentProfile.ContentType.CONTENT_TYPE_BOX64)) {
-                String entryName = ContentsManager.getEntryName(profile);
-                int firstDashIndex = entryName.indexOf('-');
-                itemList.add(entryName.substring(firstDashIndex + 1));
+            for (ContentProfile profile : manager.getInstalledProfiles(ContentProfile.ContentType.CONTENT_TYPE_BOX64)) {
+                String ver = profile.verName != null ? profile.verName : "";
+                if (ver.startsWith("box64-")) ver = ver.substring("box64-".length());
+                if (!itemList.contains(ver)) itemList.add(ver);
             }
         } else {
-            for (ContentProfile profile : manager.getProfiles(ContentProfile.ContentType.CONTENT_TYPE_WOWBOX64)) {
-                String entryName = ContentsManager.getEntryName(profile);
-                int firstDashIndex = entryName.indexOf('-');
-                itemList.add(entryName.substring(firstDashIndex + 1));
+            for (ContentProfile profile : manager.getInstalledProfiles(ContentProfile.ContentType.CONTENT_TYPE_WOWBOX64)) {
+                String ver = profile.verName != null ? profile.verName : "";
+                if (ver.startsWith("wowbox64-")) ver = ver.substring("wowbox64-".length());
+                else if (ver.startsWith("wow-box64-")) ver = ver.substring("wow-box64-".length());
+                if (!itemList.contains(ver)) itemList.add(ver);
             }
         }
         spinner.setAdapter(new ArrayAdapter<>(context, android.R.layout.simple_spinner_dropdown_item, itemList));

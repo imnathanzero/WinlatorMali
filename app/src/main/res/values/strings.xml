@@ -4,7 +4,6 @@
     <!ENTITY TERMUX_X11_APP_NAME "Winlator:X11">
     ]>
 <resources>
-    <string name="app_name">Winlator Mali</string>
     <string name="run">Run</string>
     <string name="edit">Edit</string>
     <string name="remove">Remove</string>
@@ -99,12 +98,12 @@
     <string name="duplicate">Duplicate</string>
     <string name="about">About</string>
     <string name="graphics_enhancements">Graphics Enhancements</string>
-    <string name="enable_lsfg">Enable Apex Frame Generation</string>
-    <string name="lsfg_description">Apex Frame Generation is a custom implementation developed for Winlator Mali that uses optimized optical flow to double fluidity.</string>
-    <string name="lsfg_quality">Apex Quality</string>
-    <string name="lsfg_multiplier">Apex Multiplier</string>
-    <string name="lsfg_target_fps">Apex Target Refresh Rate</string>
-    <string name="show_lsfg_stats">Show Apex Stats</string>
+    <string name="enable_lsfg">Enable Apex DIS Frame Generation</string>
+    <string name="lsfg_description">Dense Inverse Search (DIS) optical flow frame generation with variational refinement and zero-motion HUD protection.</string>
+    <string name="lsfg_quality">Apex DIS Quality</string>
+    <string name="lsfg_multiplier">Apex DIS Multiplier</string>
+    <string name="lsfg_target_fps">Apex DIS Target Refresh Rate</string>
+    <string name="show_lsfg_stats">Show Apex DIS Stats</string>
     <string name="motion_blur">Motion Blur</string>
     <string name="credits_and_third_party_apps">Credits and Third-party apps</string>
     <string name="external_controllers">External Controllers</string>
@@ -259,6 +258,7 @@
         <b>0</b> : Do not allow continue running a block that is unprotected and potentially dirty.<br />
         <b>1</b> : Allow continue to run a dynablock that write data in the same page as code. It can gets faster in loading time of some game but can also get unexpected crashes.<br />
         <b>2</b> : Will also, when it detect an HotPage, flag that page as NEVERCLEAN, and so it will not be write protected but Block build from that page will always be tested. It can be faster that way (but some SMC case might not be trapped).]]></string>
+    <string name="show_adrenotools_unsupported">Enable / Show Adreno Tools on Unsupported Devices</string>
     <string name="box64_env_var_help__dynarec_nativeflags"><![CDATA[
         Enable or disable the use of native flags.<br /><br />
         <b>0</b> : Do not use native flags.<br />
@@ -343,6 +343,15 @@
     <string name="game_controller">Unified Control System</string>
     <string name="vibration">Vibration</string>
     <string name="vibration_slot">Slot %1$d</string>
+    <string name="test_vibration">Test Vibration</string>
+    <string name="controller_vibration_test">Controller Vibration Test</string>
+    <string name="left_motor_heavy">Heavy Left Motor (Rumble)</string>
+    <string name="right_motor_light">Light Right Motor (Buzz)</string>
+    <string name="both_motors">Both Motors (Full Rumble)</string>
+    <string name="pulse_pattern">Pulse Pattern Test</string>
+    <string name="start_vibration_test">Start Vibration Test</string>
+    <string name="stop_vibration">Stop Vibration</string>
+    <string name="grant_usb_permission">Grant USB Permission</string>
 
     <string name="experimental">Experimental</string>
     <string name="glibc_exp_edition">Based On</string>
@@ -693,12 +702,16 @@ E.g. <b>META</b> for <i>META key</i>, \n
     <string name="graphics_driver_bcn_quality_preset">BCn Shader Quality</string>
     <string name="graphics_driver_bcn_texture_scale">BCn Texture Resolution</string>
     <string name="bcn_layer_configuration">BCN Layer Configuration</string>
+    <string name="ram_booster">RAM Booster (LMK Trigger)</string>
+    <string name="enable_ram_booster">Enable RAM Booster</string>
+    <string name="enable_ram_booster_toast">Show RAM Booster Notifications</string>
+    <string name="crisis_threshold">Crisis Threshold (%)</string>
+    <string name="pre_crisis_level">Pre-Crisis Level (%)</string>
+    <string name="crisis_intensity">Crisis Boost Intensity (%)</string>
+    <string name="pre_crisis_intensity">Pre-Crisis Boost Intensity (%)</string>
+    <string name="booster_profile">Booster Profile</string>
     <string name="graphics_driver_astc_transcode">ASTC Transcode</string>
     <string name="graphics_driver_etc2_transcode">ETC2 Transcode</string>
-    <string name="vkbasalt">vkBasalt</string>
-    <string name="vkbasalt_sharpness_effects">Sharpness Effect</string>
-    <string name="vkbasalt_sharpness_level">Sharpness Level</string>
-    <string name="vkbasalt_sharpness_denoise">Sharpeness Denoise</string>
     <string name="shutdown">Shutdown</string>
     <string name="disable_mouse">Toggle Mouse</string>
     <string name="enable_mouse">Enable Mouse</string>
@@ -722,4 +735,6 @@ E.g. <b>META</b> for <i>META key</i>, \n
     <string name="search_cover_art">Search cover art</string>
     <string name="change_cover_art">Change cover art</string>
     <string name="reset_cover_art">Reset cover art</string>
+    <string name="search">Search</string>
+    <string name="refresh">Refresh</string>
 </resources>

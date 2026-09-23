@@ -127,11 +127,26 @@
                 android:layout_marginTop="16dp">
                 <LinearLayout style="@style/FieldSet">
 
-                    <CheckBox
-                        android:id="@+id/CBHudMono"
+                    <LinearLayout
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:text="Monochrome Mode" />
+                        android:orientation="vertical"
+                        android:layout_marginBottom="8dp">
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="HUD Look &amp; Style"
+                            android:textStyle="bold"
+                            android:textSize="12sp" />
+                        <Spinner
+                            android:id="@+id/SPHudStyle"
+                            style="@style/ComboBox"
+                            android:layout_width="match_parent"
+                            android:layout_height="42dp"
+                            android:layout_marginTop="4dp"
+                            android:spinnerMode="dropdown" />
+
+                    </LinearLayout>
 
                     <CheckBox
                         android:id="@+id/CBHudBorder"
@@ -167,7 +182,10 @@
                     <SeekBar
                         android:id="@+id/SBHudAlpha"
                         android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
+                        android:layout_height="36dp"
+                        android:paddingStart="4dp"
+                        android:paddingEnd="4dp"
+                        android:splitTrack="false"
                         android:max="100" />
 
                     <LinearLayout
@@ -192,7 +210,10 @@
                     <SeekBar
                         android:id="@+id/SBHudScale"
                         android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
+                        android:layout_height="36dp"
+                        android:paddingStart="4dp"
+                        android:paddingEnd="4dp"
+                        android:splitTrack="false"
                         android:max="100" />
 
                     <TextView
@@ -206,8 +227,9 @@
                         android:id="@+id/SPHudPreset"
                         style="@style/ComboBox"
                         android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:spinnerMode="dropdown" />
+                        android:layout_height="42dp"
+                        android:spinnerMode="dropdown"
+                        android:layout_marginBottom="4dp" />
                 </LinearLayout>
                 <TextView style="@style/FieldSetLabel" android:text="Appearance" />
             </FrameLayout>

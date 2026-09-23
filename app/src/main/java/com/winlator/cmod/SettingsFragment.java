@@ -11,6 +11,8 @@ import android.os.Environment;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.AdapterView;
+import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
@@ -70,8 +72,7 @@ public class SettingsFragment extends Fragment {
     private CheckBox cbEnableCustomApiKey;
     private EditText etCustomApiKey;
 
-    private CheckBox cbDarkMode;
-    boolean isDarkMode;
+    boolean isDarkMode = true;
 
     private static final int REQUEST_CODE_WINLATOR_PATH = 1002;
     private static final int REQUEST_CODE_SHORTCUT_EXPORT_PATH = 1003;
@@ -106,19 +107,91 @@ public class SettingsFragment extends Fragment {
         // Apply dynamic styles
         applyDynamicStyles(view, isDarkMode);
 
-        // Initialize the Dark Mode checkbox
-        cbDarkMode = view.findViewById(R.id.CBDarkMode);
-        cbDarkMode.setChecked(preferences.getBoolean("dark_mode", true));
+        final com.google.android.material.tabs.TabLayout tabLayout = view.findViewById(R.id.TabLayout);
+        final View llTabAppearance = view.findViewById(R.id.LLTabAppearance);
+        final View llTabEmulation = view.findViewById(R.id.LLTabEmulation);
+        final View llTabInputDisplay = view.findViewById(R.id.LLTabInputDisplay);
+        final View llTabStorageAudio = view.findViewById(R.id.LLTabStorageAudio);
+        final View llTabPerformance = view.findViewById(R.id.LLTabPerformance);
+        final View llTabAdvanced = view.findViewById(R.id.LLTabAdvanced);
 
-        cbDarkMode.setOnCheckedChangeListener((buttonView, isChecked) -> {
-            // Save dark mode preference
-            SharedPreferences.Editor editor = preferences.edit();
-            editor.putBoolean("dark_mode", isChecked);
-            editor.apply();
+        if (tabLayout != null) {
+            final int tabTextColor = isDarkMode ? 0xFFFFFFFF : 0xFF121212;
+            final int accent = ThemeManager.getAccentColor(context);
+            tabLayout.setSelectedTabIndicatorColor(accent);
+            tabLayout.setTabTextColors(tabTextColor, tabTextColor);
+            tabLayout.addOnTabSelectedListener(new com.google.android.material.tabs.TabLayout.OnTabSelectedListener() {
+                @Override
+                public void onTabSelected(com.google.android.material.tabs.TabLayout.Tab tab) {
+                    tabLayout.setTabTextColors(tabTextColor, tabTextColor);
+                    if (llTabAppearance != null) llTabAppearance.setVisibility(View.GONE);
+                    if (llTabEmulation != null) llTabEmulation.setVisibility(View.GONE);
+                    if (llTabInputDisplay != null) llTabInputDisplay.setVisibility(View.GONE);
+                    if (llTabStorageAudio != null) llTabStorageAudio.setVisibility(View.GONE);
+                    if (llTabPerformance != null) llTabPerformance.setVisibility(View.GONE);
+                    if (llTabAdvanced != null) llTabAdvanced.setVisibility(View.GONE);
 
-            // Update the UI or activity theme if necessary
-            updateTheme(isChecked);
-        });
+                    switch (tab.getPosition()) {
+                        case 0:
+                            if (llTabAppearance != null) llTabAppearance.setVisibility(View.VISIBLE);
+                            break;
+                        case 1:
+                            if (llTabEmulation != null) llTabEmulation.setVisibility(View.VISIBLE);
+                            break;
+                        case 2:
+                            if (llTabInputDisplay != null) llTabInputDisplay.setVisibility(View.VISIBLE);
+                            break;
+                        case 3:
+                            if (llTabStorageAudio != null) llTabStorageAudio.setVisibility(View.VISIBLE);
+                            break;
+                        case 4:
+                            if (llTabPerformance != null) llTabPerformance.setVisibility(View.VISIBLE);
+                            break;
+                        case 5:
+                            if (llTabAdvanced != null) llTabAdvanced.setVisibility(View.VISIBLE);
+                            break;
+                    }
+                }
+
+                @Override
+                public void onTabUnselected(com.google.android.material.tabs.TabLayout.Tab tab) {}
+
+                @Override
+                public void onTabReselected(com.google.android.material.tabs.TabLayout.Tab tab) {}
+            });
+        }
+
+        final Spinner sThemePreset = view.findViewById(R.id.SThemePreset);
+        if (sThemePreset != null) {
+            String[] presetNames = ThemeManager.getPresetNames(context);
+            android.widget.ArrayAdapter<String> presetAdapter = new android.widget.ArrayAdapter<>(context, R.layout.custom_spinner_item, presetNames);
+            presetAdapter.setDropDownViewResource(R.layout.custom_spinner_dropdown_item);
+            sThemePreset.setAdapter(presetAdapter);
+            sThemePreset.setSelection(ThemeManager.getSelectedPresetIndex(context));
+            sThemePreset.setPopupBackgroundResource(isDarkMode ? R.drawable.content_dialog_background_dark : R.drawable.content_dialog_background);
+
+            sThemePreset.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
+                @Override
+                public void onItemSelected(android.widget.AdapterView<?> parent, View v, int position, long id) {
+                    if (position != ThemeManager.getSelectedPresetIndex(context)) {
+                        ThemeManager.setSelectedPresetIndex(context, position);
+                        if (ThemeManager.isCustomPresetSelected(context)) {
+                            new com.winlator.cmod.contentdialog.CustomThemeDialog(context).show();
+                        } else {
+                            if (getActivity() != null) getActivity().recreate();
+                        }
+                    }
+                }
+
+                @Override
+                public void onNothingSelected(android.widget.AdapterView<?> parent) {}
+            });
+        }
+
+        View btCustomizeTheme = view.findViewById(R.id.BTCustomizeTheme);
+        if (btCustomizeTheme != null) {
+            btCustomizeTheme.setOnClickListener(v -> new com.winlator.cmod.contentdialog.CustomThemeDialog(context).show());
+        }
 
         initCustomApiKeySettings(view);
 
@@ -273,8 +346,103 @@ public class SettingsFragment extends Fragment {
         final CheckBox cbShareClipboard = view.findViewById(R.id.CBShareAndroidClipboard);
         cbShareClipboard.setChecked(preferences.getBoolean("share_android_clipboard", false));
 
+        final CheckBox cbShowAdrenoTools = view.findViewById(R.id.CBShowAdrenoTools);
+        cbShowAdrenoTools.setChecked(preferences.getBoolean("show_adrenotools_unsupported", false));
+        cbShowAdrenoTools.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            preferences.edit().putBoolean("show_adrenotools_unsupported", isChecked).apply();
+            if (getActivity() != null) {
+                NavigationView navView = getActivity().findViewById(R.id.NavigationView);
+                if (navView != null) {
+                    android.view.MenuItem item = navView.getMenu().findItem(R.id.main_menu_adrenotools_gpu_drivers);
+                    if (item != null) {
+                        item.setVisible(isChecked || com.winlator.cmod.core.GPUInformation.isAdrenoGPU(context));
+                    }
+                }
+            }
+        });
+
         final EditText etDownloadableContentsURL = view.findViewById(R.id.ETDownloadableContentsURL);
-        etDownloadableContentsURL.setText(preferences.getString("downloadable_contents_url", ContentsManager.REMOTE_PROFILES));
+        String savedCatalogUrl = preferences.getString("downloadable_contents_url", ContentsManager.BANNERLATOR_PROFILES);
+        if (savedCatalogUrl.contains("gitlab") || savedCatalogUrl.contains("Sd/")) {
+            savedCatalogUrl = ContentsManager.BANNERLATOR_PROFILES;
+        }
+        etDownloadableContentsURL.setText(savedCatalogUrl);
+
+        final Spinner sCatalogPreset = view.findViewById(R.id.SCatalogPreset);
+        if (sCatalogPreset != null) {
+            String[] presets = {
+                "☁️ Bannerlator (The412Banner)",
+                "☁️ WinNative (nicholasx417)",
+                "☁️ StevenMXZ Contents",
+                "🌐 Custom Catalog URL"
+            };
+            boolean isDarkMode = preferences.getBoolean("dark_mode", true);
+            ArrayAdapter<String> adapter = new ArrayAdapter<String>(context, android.R.layout.simple_spinner_dropdown_item, presets) {
+                @NonNull
+                @Override
+                public View getView(int position, @Nullable View convertView, @NonNull ViewGroup parent) {
+                    View v = super.getView(position, convertView, parent);
+                    if (v instanceof TextView) {
+                        ((TextView) v).setTextColor(isDarkMode ? Color.WHITE : Color.BLACK);
+                    }
+                    return v;
+                }
+
+                @Override
+                public View getDropDownView(int position, @Nullable View convertView, @NonNull ViewGroup parent) {
+                    View v = super.getDropDownView(position, convertView, parent);
+                    if (v instanceof TextView) {
+                        ((TextView) v).setTextColor(isDarkMode ? Color.WHITE : Color.BLACK);
+                        v.setBackgroundColor(isDarkMode ? 0xFF2A2A2A : 0xFFFFFFFF);
+                    }
+                    return v;
+                }
+            };
+            sCatalogPreset.setAdapter(adapter);
+            sCatalogPreset.setPopupBackgroundResource(isDarkMode ? R.drawable.content_dialog_background_dark : R.drawable.content_dialog_background);
+
+            if (savedCatalogUrl.equals(ContentsManager.BANNERLATOR_PROFILES)) {
+                sCatalogPreset.setSelection(0, false);
+            } else if (savedCatalogUrl.equals(ContentsManager.WINNATIVE_PROFILES)) {
+                sCatalogPreset.setSelection(1, false);
+            } else if (savedCatalogUrl.equals(ContentsManager.STEVENMXZ_PROFILES)) {
+                sCatalogPreset.setSelection(2, false);
+            } else {
+                sCatalogPreset.setSelection(3, false);
+            }
+
+            sCatalogPreset.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+                @Override
+                public void onItemSelected(AdapterView<?> parent, View v, int position, long id) {
+                    switch (position) {
+                        case 0 -> etDownloadableContentsURL.setText(ContentsManager.BANNERLATOR_PROFILES);
+                        case 1 -> etDownloadableContentsURL.setText(ContentsManager.WINNATIVE_PROFILES);
+                        case 2 -> etDownloadableContentsURL.setText(ContentsManager.STEVENMXZ_PROFILES);
+                    }
+                }
+
+                @Override
+                public void onNothingSelected(AdapterView<?> parent) {}
+            });
+        }
+
+        final CheckBox cbGameModeSignal = view.findViewById(R.id.CBGameModeSignal);
+        final CheckBox cbThreadPriorityBoost = view.findViewById(R.id.CBThreadPriorityBoost);
+        final CheckBox cbPreferBigCores = view.findViewById(R.id.CBPreferBigCores);
+        final CheckBox cbHighRefreshRate = view.findViewById(R.id.CBHighRefreshRate);
+        final CheckBox cbSustainedPerformance = view.findViewById(R.id.CBSustainedPerformance);
+        final CheckBox cbSamsungBoost = view.findViewById(R.id.CBSamsungBoost);
+        final View llSamsungBoost = view.findViewById(R.id.LLSamsungBoost);
+
+        if (cbGameModeSignal != null) cbGameModeSignal.setChecked(preferences.getBoolean(com.winlator.cmod.perf.PerformanceManager.PREF_GAME_MODE_SIGNAL, true));
+        if (cbThreadPriorityBoost != null) cbThreadPriorityBoost.setChecked(preferences.getBoolean(com.winlator.cmod.perf.PerformanceManager.PREF_THREAD_PRIORITY_BOOST, true));
+        if (cbPreferBigCores != null) cbPreferBigCores.setChecked(preferences.getBoolean(com.winlator.cmod.perf.PerformanceManager.PREF_PREFER_BIG_CORES, false));
+        if (cbHighRefreshRate != null) cbHighRefreshRate.setChecked(preferences.getBoolean("high_refresh_rate_mode", false));
+        if (cbSustainedPerformance != null) cbSustainedPerformance.setChecked(preferences.getBoolean(com.winlator.cmod.perf.PerformanceManager.PREF_SUSTAINED_PERFORMANCE, false));
+        if (cbSamsungBoost != null) cbSamsungBoost.setChecked(preferences.getBoolean(com.winlator.cmod.perf.PerformanceManager.PREF_SAMSUNG_PERF_BOOST, true));
+        if (llSamsungBoost != null) {
+            llSamsungBoost.setVisibility(com.winlator.cmod.perf.SamsungSPerfDriver.isSamsungDevice() ? View.VISIBLE : View.GONE);
+        }
 
         view.findViewById(R.id.BTReInstallImagefs).setOnClickListener(v -> {
             ContentDialog.confirm(context, R.string.do_you_want_to_reinstall_imagefs, () -> ImageFsInstaller.installFromAssets((MainActivity) getActivity()));
@@ -283,8 +451,7 @@ public class SettingsFragment extends Fragment {
         view.findViewById(R.id.BTConfirm).setOnClickListener((v) -> {
             SharedPreferences.Editor editor = preferences.edit();
 
-            // Save Dark Mode setting
-            editor.putBoolean("dark_mode", cbDarkMode.isChecked());
+            editor.putBoolean("dark_mode", true);
             editor.putString("box64_preset", Box64PresetManager.getSpinnerSelectedId(sBox64Preset));
             editor.putString("fexcore_preset", FEXCorePresetManager.getSpinnerSelectedId(sFEXCorePreset));
             editor.putBoolean("use_dri3", cbUseDRI3.isChecked());
@@ -297,6 +464,14 @@ public class SettingsFragment extends Fragment {
             editor.putBoolean("enable_file_provider", cbEnableFileProvider.isChecked());
             editor.putBoolean("open_with_android_browser", cbOpenInBrowser.isChecked());
             editor.putBoolean("share_android_clipboard", cbShareClipboard.isChecked());
+            editor.putBoolean("show_adrenotools_unsupported", cbShowAdrenoTools.isChecked());
+
+            if (cbGameModeSignal != null) editor.putBoolean(com.winlator.cmod.perf.PerformanceManager.PREF_GAME_MODE_SIGNAL, cbGameModeSignal.isChecked());
+            if (cbThreadPriorityBoost != null) editor.putBoolean(com.winlator.cmod.perf.PerformanceManager.PREF_THREAD_PRIORITY_BOOST, cbThreadPriorityBoost.isChecked());
+            if (cbPreferBigCores != null) editor.putBoolean(com.winlator.cmod.perf.PerformanceManager.PREF_PREFER_BIG_CORES, cbPreferBigCores.isChecked());
+            if (cbHighRefreshRate != null) editor.putBoolean("high_refresh_rate_mode", cbHighRefreshRate.isChecked());
+            if (cbSustainedPerformance != null) editor.putBoolean(com.winlator.cmod.perf.PerformanceManager.PREF_SUSTAINED_PERFORMANCE, cbSustainedPerformance.isChecked());
+            if (cbSamsungBoost != null) editor.putBoolean(com.winlator.cmod.perf.PerformanceManager.PREF_SAMSUNG_PERF_BOOST, cbSamsungBoost.isChecked());
 
             editor.putString("downloadable_contents_url", etDownloadableContentsURL.getText().toString());
 
@@ -322,13 +497,8 @@ public class SettingsFragment extends Fragment {
     }
 
     private void updateTheme(boolean isDarkMode) {
-        if (isDarkMode) {
-            getActivity().setTheme(R.style.AppTheme_Dark);
-        } else {
-            getActivity().setTheme(R.style.AppTheme);
-        }
-
-        // Recreate the activity to apply the new theme
+        getActivity().setTheme(R.style.AppTheme_Dark);
+        ThemeManager.applyTheme(getActivity());
         getActivity().recreate();
     }
 
@@ -339,7 +509,9 @@ public class SettingsFragment extends Fragment {
         sBox64Preset.setPopupBackgroundResource(isDarkMode ? R.drawable.content_dialog_background_dark : R.drawable.content_dialog_background);
 
         Spinner sFEXCorePreset = view.findViewById(R.id.SFEXCorePreset);
-        sFEXCorePreset.setPopupBackgroundResource(isDarkMode ? R.drawable.content_dialog_background_dark : R.drawable.content_dialog_background);
+        if (sFEXCorePreset != null) sFEXCorePreset.setPopupBackgroundResource(isDarkMode ? R.drawable.content_dialog_background_dark : R.drawable.content_dialog_background);
+
+        com.winlator.cmod.ThemeManager.applyThemeToView(view, getContext());
     }
 
     private void applyDynamicStylesRecursively(View view) {
@@ -372,19 +544,16 @@ public class SettingsFragment extends Fragment {
         TextView experimentalLabel = view.findViewById(R.id.TVExperimental);
         applyFieldSetLabelStyle(experimentalLabel, isDarkMode);
 
+        TextView systemLabel = view.findViewById(R.id.TVSystem);
+        applyFieldSetLabelStyle(systemLabel, isDarkMode);
+
         TextView ImageFsLabel = view.findViewById(R.id.TVImageFs);
         applyFieldSetLabelStyle(ImageFsLabel, isDarkMode);
 
     }
 
     private void applyFieldSetLabelStyle(TextView textView, boolean isDarkMode) {
-        if (isDarkMode) {
-            textView.setTextColor(Color.parseColor("#cccccc"));
-            textView.setBackgroundResource(R.color.window_background_color_dark);
-        } else {
-            textView.setTextColor(Color.parseColor("#bdbdbd"));
-            textView.setBackgroundResource(R.color.window_background_color);
-        }
+        ThemeManager.applyFieldSetLabelStyle(textView, isDarkMode);
     }
 
     private void initCustomApiKeySettings(View view) {

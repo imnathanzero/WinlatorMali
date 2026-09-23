@@ -30,7 +30,7 @@ public class ContentDialog extends Dialog {
     private Runnable onCancelCallback;
     private final View contentView;
 
-    private boolean isDarkMode;
+    protected boolean isDarkMode;
 
     public ContentDialog(@NonNull Context context) {
         this(context, 0);
@@ -39,19 +39,29 @@ public class ContentDialog extends Dialog {
     private View inflatedLayout;
 
     public ContentDialog(@NonNull Context context, int layoutResId) {
-        super(context, R.style.ContentDialog);
+        super(context, com.winlator.cmod.ThemeManager.isDarkMode(context) ? R.style.ContentDialog_Dark : R.style.ContentDialog);
         contentView = LayoutInflater.from(context).inflate(R.layout.content_dialog, null);
 
 
-        SharedPreferences sharedPreferences = PreferenceManager.getDefaultSharedPreferences(context);
-        isDarkMode = sharedPreferences.getBoolean("dark_mode", true);
+        isDarkMode = com.winlator.cmod.ThemeManager.isDarkMode(context);
+        com.winlator.cmod.ThemeManager.applyTheme(context);
+        int accentColor = com.winlator.cmod.ThemeManager.getAccentColor(context);
+        int textColor = com.winlator.cmod.ThemeManager.getOnSurfaceTextColor(context);
 
-//        contentView.setBackgroundResource(isDarkMode ? R.drawable.content_dialog_background_dark: R.drawable.content_dialog_background);
+        int surfaceColor = com.winlator.cmod.ThemeManager.getSurfaceColor(context);
+        android.graphics.drawable.GradientDrawable dialogBg = new android.graphics.drawable.GradientDrawable();
+        dialogBg.setColor(surfaceColor);
+        dialogBg.setCornerRadius(com.winlator.cmod.core.UnitUtils.dpToPx(14));
+        contentView.setBackground(dialogBg);
 
-        if (isDarkMode) {
-            this.getContext().setTheme(R.style.ContentDialog_Dark);
-        }
+        TextView tvTitle = contentView.findViewById(R.id.TVTitle);
+        if (tvTitle != null) tvTitle.setTextColor(accentColor);
 
+        ImageView ivIcon = contentView.findViewById(R.id.IVIcon);
+        if (ivIcon != null) ivIcon.setImageTintList(android.content.res.ColorStateList.valueOf(accentColor));
+
+        TextView tvMessage = contentView.findViewById(R.id.TVMessage);
+        if (tvMessage != null) tvMessage.setTextColor(textColor);
 
         if (layoutResId > 0) {
             FrameLayout frameLayout = contentView.findViewById(R.id.FrameLayout);
@@ -59,6 +69,8 @@ public class ContentDialog extends Dialog {
             View view = LayoutInflater.from(context).inflate(layoutResId, frameLayout, false);
             frameLayout.addView(view);
         }
+
+        com.winlator.cmod.ThemeManager.applyThemeToView(contentView, context);
 
         View confirmButton = contentView.findViewById(R.id.BTConfirm);
         confirmButton.setOnClickListener((v) -> {
@@ -98,21 +110,31 @@ public class ContentDialog extends Dialog {
 
     public void setIcon(int iconResId) {
         ImageView imageView = findViewById(R.id.IVIcon);
-        imageView.setImageResource(iconResId);
-        imageView.setVisibility(View.VISIBLE);
+        if (imageView != null) {
+            imageView.setImageResource(iconResId);
+            imageView.setImageTintList(android.content.res.ColorStateList.valueOf(com.winlator.cmod.ThemeManager.getAccentColor(getContext())));
+            imageView.setVisibility(View.VISIBLE);
+        }
     }
 
     public void setTitle(String title) {
         LinearLayout titleBar = findViewById(R.id.LLTitleBar);
         TextView tvTitle = findViewById(R.id.TVTitle);
+        ImageView ivIcon = findViewById(R.id.IVIcon);
 
         if (title != null && !title.isEmpty()) {
-            tvTitle.setText(title);
-            titleBar.setVisibility(View.VISIBLE);
+            if (tvTitle != null) {
+                tvTitle.setText(title);
+                tvTitle.setTextColor(com.winlator.cmod.ThemeManager.getAccentColor(getContext()));
+            }
+            if (ivIcon != null) {
+                ivIcon.setImageTintList(android.content.res.ColorStateList.valueOf(com.winlator.cmod.ThemeManager.getAccentColor(getContext())));
+            }
+            if (titleBar != null) titleBar.setVisibility(View.VISIBLE);
         }
         else {
-            tvTitle.setText("");
-            titleBar.setVisibility(View.GONE);
+            if (tvTitle != null) tvTitle.setText("");
+            if (titleBar != null) titleBar.setVisibility(View.GONE);
         }
     }
 
@@ -183,7 +205,7 @@ public class ContentDialog extends Dialog {
 
         SharedPreferences sharedPreferences = PreferenceManager.getDefaultSharedPreferences(context);
         boolean isDarkMode = sharedPreferences.getBoolean("dark_mode", true);
-        applyDarkThemeToEditText(editText, isDarkMode);
+        applyThemeToEditText(editText, isDarkMode);
 
         editText.setHint(R.string.untitled);
         if (defaultText != null) editText.setText(defaultText);
@@ -198,7 +220,7 @@ public class ContentDialog extends Dialog {
         dialog.show();
     }
 
-    private static void applyDarkThemeToEditText(EditText editText, boolean isDarkMode) {
+    public static void applyThemeToEditText(EditText editText, boolean isDarkMode) {
         if (isDarkMode) {
             editText.setTextColor(Color.WHITE); // Set text color to white for dark theme
             editText.setHintTextColor(Color.GRAY); // Set hint color to gray

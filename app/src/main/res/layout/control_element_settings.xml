@@ -10,6 +10,43 @@
         android:layout_height="wrap_content"
         android:padding="8dp">
 
+        <LinearLayout
+            android:id="@+id/LLDragHeader"
+            android:layout_width="match_parent"
+            android:layout_height="42dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:background="#2A2A2A"
+            android:paddingStart="10dp"
+            android:paddingEnd="10dp"
+            android:layout_marginBottom="8dp"
+            android:clickable="true"
+            android:focusable="true">
+
+            <ImageView
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:src="@drawable/icon_settings"
+                app:tint="@color/colorAccent"
+                android:layout_marginEnd="8dp" />
+
+            <TextView
+                android:id="@+id/TVDragTitle"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Settings (Drag Here to Move)"
+                android:textStyle="bold"
+                android:textColor="@color/colorAccent"
+                android:textSize="13sp" />
+
+            <ImageView
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:src="@drawable/icon_move"
+                app:tint="@color/colorAccent" />
+        </LinearLayout>
+
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
@@ -19,7 +56,7 @@
             style="@style/ComboBox"
             android:id="@+id/SType"
             android:layout_width="match_parent"
-            android:spinnerMode="dialog" />
+            android:spinnerMode="dropdown" />
 
         <LinearLayout
             android:id="@+id/LLShape"
@@ -36,7 +73,7 @@
                 style="@style/ComboBox"
                 android:id="@+id/SShape"
                 android:layout_width="match_parent"
-                android:spinnerMode="dialog" />
+                android:spinnerMode="dropdown" />
         </LinearLayout>
 
         <LinearLayout
@@ -60,8 +97,8 @@
             android:id="@+id/SBScale"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:min="50"
-            android:max="150" />
+            android:min="20"
+            android:max="600" />
 
         <LinearLayout
             android:id="@+id/LLRangeOptions"
@@ -78,7 +115,7 @@
                 style="@style/ComboBox"
                 android:id="@+id/SRange"
                 android:layout_width="match_parent"
-                android:spinnerMode="dialog" />
+                android:spinnerMode="dropdown" />
 
             <TextView
                 android:layout_width="wrap_content"
@@ -139,7 +176,7 @@
                 style="@style/ComboBox"
                 android:id="@+id/SBindingUp"
                 android:layout_width="match_parent"
-                android:spinnerMode="dialog" />
+                android:spinnerMode="dropdown" />
 
             <TextView
                 android:layout_width="wrap_content"
@@ -150,7 +187,7 @@
                 style="@style/ComboBox"
                 android:id="@+id/SBindingRight"
                 android:layout_width="match_parent"
-                android:spinnerMode="dialog" />
+                android:spinnerMode="dropdown" />
 
             <TextView
                 android:layout_width="wrap_content"
@@ -161,7 +198,7 @@
                 style="@style/ComboBox"
                 android:id="@+id/SBindingDown"
                 android:layout_width="match_parent"
-                android:spinnerMode="dialog" />
+                android:spinnerMode="dropdown" />
 
             <TextView
                 android:layout_width="wrap_content"
@@ -172,7 +209,7 @@
                 style="@style/ComboBox"
                 android:id="@+id/SBindingLeft"
                 android:layout_width="match_parent"
-                android:spinnerMode="dialog" />
+                android:spinnerMode="dropdown" />
         </LinearLayout>
 
         <CheckBox
@@ -216,6 +253,92 @@
                     android:layout_height="wrap_content"
                     android:orientation="horizontal" />
             </HorizontalScrollView>
+
+            <CheckBox
+                android:id="@+id/CBCustomIconAsButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:text="Fill Button (Icon As Button)" />
+
+            <LinearLayout
+                android:id="@+id/LLBoundaryAdjuster"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:layout_marginTop="8dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal">
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Boundary Width" />
+                    <TextView
+                        android:id="@+id/TVWidthScale"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="100%" />
+                </LinearLayout>
+
+                <SeekBar
+                    android:id="@+id/SBWidthScale"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:min="50"
+                    android:max="300" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginTop="4dp">
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Boundary Height" />
+                    <TextView
+                        android:id="@+id/TVHeightScale"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="100%" />
+                </LinearLayout>
+
+                <SeekBar
+                    android:id="@+id/SBHeightScale"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:min="50"
+                    android:max="300" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginTop="4dp">
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Touch Area Padding" />
+                    <TextView
+                        android:id="@+id/TVTouchPadding"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="+0" />
+                </LinearLayout>
+
+                <SeekBar
+                    android:id="@+id/SBTouchPadding"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:min="0"
+                    android:max="50" />
+            </LinearLayout>
         </LinearLayout>
     </LinearLayout>
 </ScrollView>

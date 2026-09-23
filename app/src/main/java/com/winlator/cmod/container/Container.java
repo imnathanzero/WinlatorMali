@@ -27,10 +27,11 @@ public class Container {
         BUTTON_A, BUTTON_B, BUTTON_X, BUTTON_Y, BUTTON_GRIP, BUTTON_TRIGGER,
         THUMBSTICK_UP, THUMBSTICK_DOWN, THUMBSTICK_LEFT, THUMBSTICK_RIGHT
     }
-    public static final String DEFAULT_ENV_VARS = "WRAPPER_MAX_IMAGE_COUNT=0 ZINK_DESCRIPTORS=lazy ZINK_DEBUG=compact MESA_SHADER_CACHE_DISABLE=false MESA_SHADER_CACHE_MAX_SIZE=512MB mesa_glthread=true WINEESYNC=1 DXVK_HUD=devinfo,fps,memory,gpuload,version,api PULSE_LATENCY_MSEC=40 WRAPPER_NO_PATCH_OPCONSTCOMP=1";
+    public static final String DEFAULT_DISPLAY_DRIVER = "opengl";
+    public static final String DEFAULT_ENV_VARS = "WRAPPER_MAX_IMAGE_COUNT=0 WINEESYNC=1 DXVK_HUD=devinfo,fps,memory,gpuload,version,api PULSE_LATENCY_MSEC=40 WRAPPER_NO_PATCH_OPCONSTCOMP=1 GLADIO_NO_ERROR=1";
     public static final String DEFAULT_SCREEN_SIZE = "1280x720";
     public static final String DEFAULT_GRAPHICS_DRIVER = "wrapper";
-    public static final String DEFAULT_AUDIO_DRIVER = "pulseaudio";
+    public static final String DEFAULT_AUDIO_DRIVER = "pulseaudio-gn";
     public static final String DEFAULT_EMULATOR = "FEXCore";
     public static final String DEFAULT_DXWRAPPER = "dxvk+vkd3d";
     public static final String DEFAULT_DXWRAPPERCONFIG = "version=" + DefaultVersion.DXVK + ",framerate=0,async=0,asyncCache=0" + ",vkd3dVersion=" + DefaultVersion.VKD3D + ",vkd3dLevel=12_1" + ",ddrawrapper=" + Container.DEFAULT_DDRAWRAPPER + ",csmt=3" + ",gpuName=NVIDIA GeForce GTX 480" + ",videoMemorySize=2048" + ",strict_shader_math=1" + ",OffscreenRenderingMode=fbo" + ",renderer=gl,dxvkConfig=1";
@@ -48,6 +49,8 @@ public class Container {
     private String name;
     private String screenSize = DEFAULT_SCREEN_SIZE;
     private String envVars = DEFAULT_ENV_VARS;
+    private String displayDriver = DEFAULT_DISPLAY_DRIVER;
+    private String displayxConfig = com.winlator.cmod.contentdialog.DisplayXConfigDialog.DEFAULT_CONFIG;
     private String graphicsDriver = DEFAULT_GRAPHICS_DRIVER;
     private String graphicsDriverConfig = DEFAULT_GRAPHICSDRIVERCONFIG;
     private String dxwrapper = DEFAULT_DXWRAPPER;
@@ -65,6 +68,13 @@ public class Container {
     private String fexcoreVersion;
     private String fexcorePreset = FEXCorePreset.INTERMEDIATE;
     private String box64Preset = Box64Preset.COMPATIBILITY;
+    private boolean ramBoosterEnabled = false;
+    private boolean ramBoosterToastEnabled = true;
+    private String ramBoosterProfile = "smart";
+    private int ramBoosterCrisisThreshold = 90;
+    private int ramBoosterPreCrisisThreshold = 83;
+    private int ramBoosterCrisisIntensity = 45;
+    private int ramBoosterPreCrisisIntensity = 20;
     private File rootDir;
     private JSONObject extraData;
     private String midiSoundFont = "";
@@ -149,11 +159,17 @@ public class Container {
     }
 
     public String getAudioDriver() {
+        return normalizeAudioDriver(audioDriver);
+    }
+
+    public static String normalizeAudioDriver(String audioDriver) {
+        if (audioDriver == null || audioDriver.isEmpty()) return DEFAULT_AUDIO_DRIVER;
+        if (audioDriver.equals("oboe") || audioDriver.equals("pulse-audio-gn") || audioDriver.equals("pulseaudio_gn")) return "pulseaudio-gn";
         return audioDriver;
     }
 
     public void setAudioDriver(String audioDriver) {
-        this.audioDriver = audioDriver;
+        this.audioDriver = normalizeAudioDriver(audioDriver);
     }
 
     public String getWinComponents() {
@@ -244,6 +260,22 @@ public class Container {
         this.fexcoreVersion = version;
     }
 
+    public String getDisplayDriver() {
+        return displayDriver != null ? displayDriver : DEFAULT_DISPLAY_DRIVER;
+    }
+
+    public void setDisplayDriver(String displayDriver) {
+        this.displayDriver = displayDriver;
+    }
+
+    public String getDisplayxConfig() {
+        return displayxConfig != null ? displayxConfig : com.winlator.cmod.contentdialog.DisplayXConfigDialog.DEFAULT_CONFIG;
+    }
+
+    public void setDisplayxConfig(String displayxConfig) {
+        this.displayxConfig = displayxConfig;
+    }
+
     public String getFEXCoreVersion() {
         return this.fexcoreVersion;
     }
@@ -262,6 +294,66 @@ public class Container {
 
     public void setBox64Preset(String box64Preset) {
         this.box64Preset = box64Preset;
+    }
+
+    public boolean isRamBoosterEnabled() {
+        return ramBoosterEnabled;
+    }
+
+    public void setRamBoosterEnabled(boolean ramBoosterEnabled) {
+        this.ramBoosterEnabled = ramBoosterEnabled;
+    }
+
+    public boolean isRamBoosterToastEnabled() {
+        return ramBoosterToastEnabled;
+    }
+
+    public void setRamBoosterToastEnabled(boolean ramBoosterToastEnabled) {
+        this.ramBoosterToastEnabled = ramBoosterToastEnabled;
+    }
+
+    public String getRamBoosterProfile() {
+        return ramBoosterProfile;
+    }
+
+    public void setRamBoosterProfile(String profile) {
+        this.ramBoosterProfile = profile;
+    }
+
+    public boolean isRamBoosterSmartMode() {
+        return ramBoosterProfile.equals("smart");
+    }
+
+    public int getRamBoosterCrisisThreshold() {
+        return ramBoosterCrisisThreshold;
+    }
+
+    public void setRamBoosterCrisisThreshold(int threshold) {
+        this.ramBoosterCrisisThreshold = threshold;
+    }
+
+    public int getRamBoosterPreCrisisThreshold() {
+        return ramBoosterPreCrisisThreshold;
+    }
+
+    public void setRamBoosterPreCrisisThreshold(int threshold) {
+        this.ramBoosterPreCrisisThreshold = threshold;
+    }
+
+    public int getRamBoosterCrisisIntensity() {
+        return ramBoosterCrisisIntensity;
+    }
+
+    public void setRamBoosterCrisisIntensity(int intensity) {
+        this.ramBoosterCrisisIntensity = intensity;
+    }
+
+    public int getRamBoosterPreCrisisIntensity() {
+        return ramBoosterPreCrisisIntensity;
+    }
+
+    public void setRamBoosterPreCrisisIntensity(int intensity) {
+        this.ramBoosterPreCrisisIntensity = intensity;
     }
 
     public String getBox64Version() { return box64Version; }
@@ -411,6 +503,8 @@ public class Container {
             data.put("cpuListWoW64", cpuListWoW64);
             data.put("graphicsDriver", graphicsDriver);
             data.put("graphicsDriverConfig", graphicsDriverConfig);
+            data.put("displayDriver", displayDriver);
+            data.put("displayxConfig", displayxConfig);
             data.put("emulator", emulator);
             data.put("dxwrapper", dxwrapper);
             if (!dxwrapperConfig.isEmpty()) data.put("dxwrapperConfig", dxwrapperConfig);
@@ -425,6 +519,13 @@ public class Container {
             data.put("fexcorePreset", fexcorePreset);
             data.put("fexcoreVersion", fexcoreVersion);
             data.put("box64Preset", box64Preset);
+            data.put("ramBoosterEnabled", ramBoosterEnabled);
+            data.put("ramBoosterToastEnabled", ramBoosterToastEnabled);
+            data.put("ramBoosterProfile", ramBoosterProfile);
+            data.put("ramBoosterCrisisThreshold", ramBoosterCrisisThreshold);
+            data.put("ramBoosterPreCrisisThreshold", ramBoosterPreCrisisThreshold);
+            data.put("ramBoosterCrisisIntensity", ramBoosterCrisisIntensity);
+            data.put("ramBoosterPreCrisisIntensity", ramBoosterPreCrisisIntensity);
             data.put("desktopTheme", desktopTheme);
             data.put("extraData", extraData);
             data.put("midiSoundFont", midiSoundFont);
@@ -468,6 +569,12 @@ public class Container {
                     break;
                 case "graphicsDriverConfig" :
                     setGraphicsDriverConfig(data.getString(key));
+                    break;
+                case "displayDriver" :
+                    setDisplayDriver(data.getString(key));
+                    break;
+                case "displayxConfig" :
+                    setDisplayxConfig(data.getString(key));
                     break;
                 case "emulator":
                     setEmulator(data.getString(key));
@@ -516,6 +623,27 @@ public class Container {
                     break;
                 case "box64Preset" :
                     setBox64Preset(data.getString(key));
+                    break;
+                case "ramBoosterEnabled":
+                    setRamBoosterEnabled(data.optBoolean(key, false));
+                    break;
+                case "ramBoosterToastEnabled":
+                    setRamBoosterToastEnabled(data.optBoolean(key, true));
+                    break;
+                case "ramBoosterProfile":
+                    setRamBoosterProfile(data.optString(key, "smart"));
+                    break;
+                case "ramBoosterCrisisThreshold":
+                    setRamBoosterCrisisThreshold(data.optInt(key, 90));
+                    break;
+                case "ramBoosterPreCrisisThreshold":
+                    setRamBoosterPreCrisisThreshold(data.optInt(key, 83));
+                    break;
+                case "ramBoosterCrisisIntensity":
+                    setRamBoosterCrisisIntensity(data.optInt(key, 45));
+                    break;
+                case "ramBoosterPreCrisisIntensity":
+                    setRamBoosterPreCrisisIntensity(data.optInt(key, 20));
                     break;
                 case "audioDriver" :
                     setAudioDriver(data.getString(key));
@@ -569,23 +697,55 @@ public class Container {
 
             if (data.has("graphicsDriver")) {
                 String graphicsDriver = data.getString("graphicsDriver");
-                if (graphicsDriver.equals("turnip-zink") || graphicsDriver.equals("turnip")) {
-                    data.put("graphicsDriver", "wrapper");
-                }
-                else if (graphicsDriver.equals("llvmpipe")) {
+                if (graphicsDriver.equals("turnip-zink") || graphicsDriver.equals("turnip") ||
+                    graphicsDriver.startsWith("wrapper-") || graphicsDriver.equals("llvmpipe")) {
                     data.put("graphicsDriver", "wrapper");
                 }
             }
 
-            if (data.has("envVars") && data.has("extraData")) {
-                JSONObject extraData = data.getJSONObject("extraData");
-                int appVersion = Integer.parseInt(extraData.optString("appVersion", "0"));
-                if (appVersion < 16) {
-                    EnvVars defaultEnvVars = new EnvVars(DEFAULT_ENV_VARS);
+            JSONObject extraData = data.optJSONObject("extraData");
+            int envMigrationVersion = extraData != null ? extraData.optInt("maliEnvMigration", 0) : 0;
+            if (envMigrationVersion < 3) {
+                if (data.has("envVars")) {
                     EnvVars envVars = new EnvVars(data.getString("envVars"));
-                    for (String name : defaultEnvVars) if (!envVars.has(name)) envVars.put(name, defaultEnvVars.get(name));
-                    data.put("envVars", envVars.toString());
+                    boolean modified = false;
+                    if (!envVars.has("GLADIO_NO_ERROR")) {
+                        envVars.put("GLADIO_NO_ERROR", "1");
+                        modified = true;
+                    }
+                    if (envVars.has("MALI_NO_DEFERRED_CTX")) {
+                        envVars.remove("MALI_NO_DEFERRED_CTX");
+                        modified = true;
+                    }
+                    if (envVars.has("GALLIUM_THREAD")) {
+                        envVars.remove("GALLIUM_THREAD");
+                        modified = true;
+                    }
+                    if (envVars.has("mesa_glthread")) {
+                        envVars.remove("mesa_glthread");
+                        modified = true;
+                    }
+                    if (envVars.has("MESA_SHADER_CACHE_DISABLE")) {
+                        envVars.remove("MESA_SHADER_CACHE_DISABLE");
+                        modified = true;
+                    }
+                    if (envVars.has("MESA_SHADER_CACHE_MAX_SIZE")) {
+                        envVars.remove("MESA_SHADER_CACHE_MAX_SIZE");
+                        modified = true;
+                    }
+                    if (envVars.has("TU_DEBUG")) {
+                        envVars.remove("TU_DEBUG");
+                        modified = true;
+                    }
+                    if (modified) {
+                        data.put("envVars", envVars.toString());
+                    }
                 }
+                if (extraData == null) {
+                    extraData = new JSONObject();
+                    data.put("extraData", extraData);
+                }
+                extraData.put("maliEnvMigration", 3);
             }
 
             KeyValueSet wincomponents1 = new KeyValueSet(DEFAULT_WINCOMPONENTS);

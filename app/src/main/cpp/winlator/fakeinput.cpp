@@ -68,6 +68,7 @@ namespace Logger {
 }
 
 void handle_sigint(int sig)  { 
+    (void)sig;
     stop_flag = 1;
 } 
 
@@ -96,17 +97,14 @@ void send_vibration(int strong, int weak, uint16_t duration_ms, uint16_t slot) {
   memcpy(addr.sun_path + 1, name, strlen(name));
   socklen_t addrlen = offsetof(struct sockaddr_un, sun_path) + 1 + strlen(name);
 
-  if (connect(sock, (struct sockaddr *)&addr, addrlen) < 0) {
-    syscall(SYS_close, sock);
-    return;
+  if (connect(sock, (struct sockaddr *)&addr, addrlen) == 0) {
+    uint16_t data[4];
+    data[0] = (uint16_t)strong;
+    data[1] = (uint16_t)weak;
+    data[2] = duration_ms;
+    data[3] = slot;
+    send(sock, data, sizeof(data), MSG_NOSIGNAL);
   }
-
-  uint16_t data[4];
-  data[0] = (uint16_t)strong;
-  data[1] = (uint16_t)weak;
-  data[2] = duration_ms;
-  data[3] = slot;
-  send(sock, data, sizeof(data), 0);
   syscall(SYS_close, sock);
 }
 
@@ -334,11 +332,7 @@ EXPORT int ioctl(int fd, int op, ...) {
     }
     else if (type == 0x45 && number == 0x6) {
     	Logger::log("Hooking ioctl EVIOCGNAME for event %s\n", event);
-    	char *name;
-    	
-    	asprintf(&name, "Generic HID Gamepad %d", event_number);
-    	
-    	strcpy((char *)argp, name);
+    	snprintf((char *)argp, 256, "Generic HID Gamepad %d", event_number);
     	return 0;
     }
     else if (type == 0x45 && number == 0x9) {
@@ -357,6 +351,9 @@ EXPORT int ioctl(int fd, int op, ...) {
         bitmask[EV_SYN / 8] |= (1 << (EV_SYN % 8));
         bitmask[EV_KEY / 8] |= (1 << (EV_KEY % 8));
         bitmask[EV_ABS / 8] |= (1 << (EV_ABS % 8));
+        if (vibration_enabled) {
+            bitmask[EV_FF / 8] |= (1 << (EV_FF % 8));
+        }
     	memcpy(argp, (void *)&bitmask, sizeof(bitmask));
     	return 0;	
     }
@@ -464,9 +461,7 @@ EXPORT int ioctl(int fd, int op, ...) {
     }
     else if (type == 0x6A && number == 0x13) {
     	Logger::log("Hooking ioctl JSIOCGNAME(len) for event %s\n", event);
-    	char *name;
-        asprintf(&name, "Generic HID Gamepad %d", event_number);
-    	strcpy((char *)argp, name);
+        snprintf((char *)argp, 256, "Generic HID Gamepad %d", event_number);
     	return 0;
     }
     else {
@@ -559,15 +554,18 @@ EXPORT ssize_t write(int fd, const void *buf, size_t count) {
 
   auto controller = controller_map.find(fd);
   if (controller != controller_map.end()) {
-    if (count == sizeof(struct input_event)) {
-      const struct input_event *ev = (const struct input_event *)buf;
+    if (count >= sizeof(struct input_event) && (count % sizeof(struct input_event) == 0)) {
+      const struct input_event *evs = (const struct input_event *)buf;
+      size_t num_events = count / sizeof(struct input_event);
       uint16_t slot = (uint16_t)get_event_number(controller->second);
-      check_ff_event(ev, slot);
-      // EV_FF events are FF control commands sent by Wine to the fake device.
-      // Writing them to the fake evdev file causes Wine to read them back as
-      // input events, corrupting controller state and blocking input. Consume
-      // them here and return success without writing to the file.
-      if (ev->type == EV_FF)
+      bool all_ff = true;
+      for (size_t i = 0; i < num_events; i++) {
+        check_ff_event(&evs[i], slot);
+        if (evs[i].type != EV_FF) {
+          all_ff = false;
+        }
+      }
+      if (all_ff)
         return (ssize_t)count;
     }
   }
@@ -580,8 +578,8 @@ EXPORT ssize_t writev(int fd, const struct iovec *iov, int iovcnt) {
     uint16_t slot = (uint16_t)get_event_number(controller->second);
     // Separate FF control events from regular input events.
     // FF events must not be written to the fake evdev file (see write() above).
-    struct iovec filtered[iovcnt];
-    int filtered_count = 0;
+    std::vector<struct iovec> filtered;
+    filtered.reserve(iovcnt);
     for (int i = 0; i < iovcnt; i++) {
       if (iov[i].iov_len == sizeof(struct input_event)) {
         const struct input_event *ev = (const struct input_event *)iov[i].iov_base;
@@ -589,11 +587,11 @@ EXPORT ssize_t writev(int fd, const struct iovec *iov, int iovcnt) {
         if (ev->type == EV_FF)
           continue;
       }
-      filtered[filtered_count++] = iov[i];
+      filtered.push_back(iov[i]);
     }
-    if (filtered_count == 0)
+    if (filtered.empty())
       return (ssize_t)(iovcnt * sizeof(struct input_event));
-    return syscall(SYS_writev, fd, filtered, filtered_count);
+    return syscall(SYS_writev, fd, filtered.data(), (int)filtered.size());
   }
   return syscall(SYS_writev, fd, iov, iovcnt);
 }
