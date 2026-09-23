@@ -1,6 +1,8 @@
 name: Build Winlator Mali APK
 
 on:
+  push:
+    branches: [ "bionic-mali-1.0" ]
   workflow_dispatch:
     inputs:
       flavor:
@@ -42,7 +44,11 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-          cache: gradle
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/bionic-mali-1.0' }}
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
